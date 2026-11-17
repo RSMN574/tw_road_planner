@@ -1,0 +1,196 @@
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: 'Microsoft JhengHei', sans-serif; background: #f8fafc; }
+  body { display: flex; height: 100vh; overflow: hidden; }
+
+  #panel {
+    width: 340px; flex-shrink: 0;
+    background: white; border-right: 1px solid #e2e8f0;
+    display: flex; flex-direction: column;
+    height: 100%; overflow-y: auto;
+  }
+  #panel h1 {
+    padding: 16px; font-size: 15px; background: #1e293b; color: white;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-shrink: 0;
+  }
+  #panel h1 small { font-weight: normal; opacity: .7; font-size: 11px; }
+  #panel .body { padding: 16px; flex: 1; }
+
+  .row { margin-bottom: 12px; }
+  .row label { display: block; font-weight: 600; margin-bottom: 4px; color: #475569; font-size: 12px; }
+  .row input {
+    width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1;
+    border-radius: 6px; font-size: 13px;
+  }
+  .row input:focus { outline: none; border-color: #3b82f6; }
+  .hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  hr { border: none; border-top: 1px solid #e2e8f0; margin: 14px 0; }
+
+  .search-result {
+    background: #f1f5f9; border-radius: 4px; margin-top: 4px;
+    max-height: 140px; overflow-y: auto;
+  }
+  .search-result div {
+    padding: 6px 10px; cursor: pointer; font-size: 12px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .search-result div:hover { background: #e2e8f0; }
+
+  button {
+    width: 100%; padding: 10px; background: #3b82f6; color: white;
+    border: none; border-radius: 6px; font-weight: 600;
+    cursor: pointer; font-size: 14px;
+  }
+  button:hover:not(:disabled) { background: #2563eb; }
+  button:disabled { background: #94a3b8; cursor: not-allowed; }
+
+  #status {
+    margin-top: 12px; padding: 10px; border-radius: 6px;
+    background: #f0fdf4; border-left: 3px solid #22c55e;
+    font-size: 12px; line-height: 1.6; display: none;
+  }
+  #status.error { background: #fef2f2; border-color: #ef4444; }
+  #status.loading { background: #fef3c7; border-color: #f59e0b; }
+
+  #canvasWrap {
+    flex: 1; position: relative; background: white;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #routeSvg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; user-select: none; }
+  #routeSvg.dragging { cursor: grabbing; }
+  /* 導航箭頭另外一層：箭頭每幀移動時，瀏覽器只重繪這一小層，不必重繪整張地圖 */
+  #navOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; will-change: transform; }   /* will-change：自己一個合成層 */
+  html[data-theme="dark"] #navOverlay { filter: invert(.92) hue-rotate(180deg); }
+  #placeholder {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: #94a3b8; font-size: 14px; gap: 8px;
+    pointer-events: none; text-align: center; padding: 20px;
+  }
+  #placeholder.hidden { display: none; }
+  #placeholder .icon { font-size: 48px; opacity: .3; }
+
+  #loader {
+    position: absolute; inset: 0; background: rgba(15,23,42,.95);
+    z-index: 9999; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; color: white;
+    font-size: 15px; gap: 20px; padding: 40px;
+  }
+  #loader.hidden { display: none; }
+  .spinner {
+    width: 50px; height: 50px; border: 4px solid rgba(255,255,255,.2);
+    border-top-color: #3b82f6; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loader .progress { font-size: 12px; opacity: .7; text-align: center; line-height: 1.8; }
+
+  #fileZone {
+    margin-top: 8px; padding: 14px; border: 2px dashed #cbd5e1;
+    border-radius: 8px; text-align: center; font-size: 12px; color: #64748b;
+    cursor: pointer; transition: all .2s;
+  }
+  #fileZone:hover { border-color: #3b82f6; background: #f0f9ff; color: #3b82f6; }
+  #fileZone.hasFile { border-color: #22c55e; background: #f0fdf4; color: #16a34a; }
+  #fileZone input { display: none; }
+  #fileName { font-weight: 600; margin-top: 4px; word-break: break-all; }
+
+  .file-list { margin-top: 8px; font-size: 11px; color: #64748b; }
+  .file-list .ok { color: #16a34a; }
+  .file-list .missing { color: #dc2626; }
+  .route-seg { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; cursor: pointer; }
+  .route-seg:hover { stroke-width: 8; }
+  #routeSvg path:not(.route-seg), #routeSvg text, #routeSvg circle { pointer-events: none; }
+  #routeSvg circle.ub, #routeSvg circle.sg { pointer-events: auto; cursor: help; }
+  #routeSvg path.alt-route { pointer-events: auto; cursor: pointer; }   /* 光暈/箭頭/標注不擋滑鼠 */
+  #tip { position: absolute; pointer-events: none; display: none; z-index: 5; white-space: nowrap;
+         background: #1e293b; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+  .rt { padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 6px; font-size: 12px; cursor: pointer; line-height: 1.5; }
+  .rt.active { border-color: #3b82f6; background: #eff6ff; }
+  .rt.na { color: #94a3b8; cursor: default; }
+  .rt .sw { display: inline-block; width: 22px; height: 5px; border-radius: 3px; margin: 0 6px 2px 4px; vertical-align: middle; }
+  .rt input { vertical-align: middle; }
+  .rt small { color: #64748b; }
+  #steps h3 { font-size: 13px; margin: 14px 0 6px; color: #334155; }
+  .step { display: flex; gap: 8px; align-items: baseline; padding: 5px 6px; font-size: 12px; border-radius: 4px; cursor: pointer; }
+  .step:hover { background: #f1f5f9; }
+  .step.sel { background: #fef3c7; }
+  .step .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  #avoid { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; }
+
+/* ============================================================
+   手機網頁／PWA／導航介面／深色主題
+   ============================================================ */
+#panel h1 .tools { display: flex; gap: 6px; }
+#panel h1 .tools button { width: 34px; height: 34px; padding: 0; background: rgba(255,255,255,.14); font-size: 16px; border-radius: 8px; }
+#panel h1 .tools button[hidden] { display: none; }
+#offlineBar { position: fixed; left: 0; right: 0; top: 0; z-index: 10001; background: #b45309; color: #fff; font-size: 12px; text-align: center; padding: calc(4px + env(safe-area-inset-top)) 8px 4px; }
+#offlineBar[hidden], #navUI[hidden], #navMsg[hidden], #navRecenter[hidden], #navVoicePanel[hidden] { display: none; }
+
+/* 導航覆蓋層：不擋地圖，只有頂部與底部兩條 */
+#navUI { position: fixed; inset: 0; z-index: 30; pointer-events: none; font-family: inherit; }
+#navUI > * { pointer-events: auto; }
+#navTop { position: absolute; left: 8px; right: 8px; top: calc(8px + env(safe-area-inset-top)); display: flex; gap: 12px; align-items: center; background: #0f172a; color: #fff; border-radius: 14px; padding: 10px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+#navArrow { font-size: 44px; line-height: 1; min-width: 52px; text-align: center; }
+#navDist { font-size: 28px; font-weight: 700; }
+#navRoad { font-size: 16px; opacity: .95; }
+#navThen { font-size: 12px; opacity: .7; margin-top: 2px; }
+#navChips { position: absolute; left: 12px; top: calc(112px + env(safe-area-inset-top)); }
+#gpsChip { font-size: 12px; padding: 3px 9px; border-radius: 12px; background: #16a34a; color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+#gpsChip[data-s="weak"], #gpsChip[data-s="pending"] { background: #d97706; }
+#gpsChip[data-s="lost"], #gpsChip[data-s="denied"], #gpsChip[data-s="unavailable"], #gpsChip[data-s="insecure"], #gpsChip[data-s="unsupported"] { background: #dc2626; }
+#navMsg { position: absolute; left: 50%; transform: translateX(-50%); top: calc(150px + env(safe-area-inset-top)); max-width: 92%; background: rgba(15,23,42,.92); color: #fff; padding: 8px 12px; border-radius: 10px; font-size: 13px; }
+#navRecenter { position: absolute; right: 12px; bottom: calc(150px + env(safe-area-inset-bottom)); width: auto; padding: 10px 14px; border-radius: 22px; background: #fff; color: #1d4ed8; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+#navVoicePanel { position: absolute; left: 8px; right: 8px; bottom: calc(132px + env(safe-area-inset-bottom)); background: #fff; color: #0f172a; border-radius: 12px; padding: 10px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); display: grid; gap: 8px; font-size: 14px; }
+#navVoicePanel label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+#navVoicePanel input[type=range] { width: 55%; }
+#navVoicePanel button { padding: 8px; background: #475569; }
+#navBottom { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; color: #0f172a; border-radius: 16px 16px 0 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 16px rgba(0,0,0,.25); }
+#navBottom .info { display: flex; justify-content: space-around; text-align: center; }
+#navBottom .info small { display: block; font-size: 11px; color: #64748b; }
+#navBottom .info b { font-size: 20px; }
+#navBottom .note { font-size: 10px; color: #94a3b8; text-align: center; margin: 2px 0 6px; }
+#navBottom .btns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+#navBottom .btns button { padding: 12px 4px; font-size: 14px; background: #475569; }
+#navBottom .btns button.danger { background: #dc2626; }
+body.navigating #canvasWrap { touch-action: none; }
+
+/* 手機／窄螢幕：地圖全版，面板變成可收合的底部抽屜 */
+@media (max-width: 800px) {
+  body { display: block; height: 100dvh; }
+  #canvasWrap { position: fixed; inset: 0; }
+  #panel { position: fixed; left: 0; right: 0; bottom: 0; width: auto; height: 62dvh; z-index: 20; border-right: 0; border-top: 1px solid #cbd5e1; border-radius: 16px 16px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,.25); transition: transform .25s; padding-bottom: env(safe-area-inset-bottom); }
+  #panel.collapsed { transform: translateY(calc(100% - 52px)); }
+  #panel h1 { border-radius: 16px 16px 0 0; position: sticky; top: 0; z-index: 2; min-height: 52px; cursor: pointer; }
+  #panel h1::before { content: ''; position: absolute; left: 50%; top: 6px; width: 40px; height: 4px; margin-left: -20px; border-radius: 2px; background: rgba(255,255,255,.4); }
+  #panel .body { padding: 12px; }
+  input, select, textarea, .row input { font-size: 16px; }        /* 避免 iOS 聚焦時自動放大 */
+  button { min-height: 44px; }
+  body.navigating #panel { display: none; }
+  #routeSvg { touch-action: none; }
+}
+@media (max-width: 800px) and (orientation: landscape) {
+  #panel { width: 46%; left: auto; right: 0; height: 100dvh; border-radius: 0; border-top: 0; border-left: 1px solid #cbd5e1; }
+  #panel.collapsed { transform: translateX(calc(100% - 52px)); }
+  #panel h1 { border-radius: 0; }
+  #navTop { right: 8px; left: 8px; padding: 6px 12px; } #navArrow { font-size: 32px; } #navDist { font-size: 22px; }
+  #navChips { top: calc(86px + env(safe-area-inset-top)); }
+}
+
+/* 深色主題（手動切換或跟隨系統）。地圖底色與常用面板元件一起換 */
+html[data-theme="dark"] body, html[data-theme="dark"] { background: #0b1220; }
+html[data-theme="dark"] #panel { background: #111827; color: #e5e7eb; border-color: #1f2937; }
+html[data-theme="dark"] .row label, html[data-theme="dark"] #steps h3 { color: #cbd5e1; }
+html[data-theme="dark"] .row input, html[data-theme="dark"] select, html[data-theme="dark"] #avoid { background: #1f2937; color: #e5e7eb; border-color: #374151; }
+html[data-theme="dark"] .rt { border-color: #374151; }
+html[data-theme="dark"] .rt.active { background: #1e293b; border-color: #3b82f6; }
+html[data-theme="dark"] .rt small, html[data-theme="dark"] .hint { color: #94a3b8; }
+html[data-theme="dark"] .search-result { background: #1f2937; } html[data-theme="dark"] .search-result div { border-color: #374151; } html[data-theme="dark"] .search-result div:hover { background: #374151; }
+html[data-theme="dark"] .step:hover { background: #1f2937; } html[data-theme="dark"] .step.sel { background: #422006; }
+html[data-theme="dark"] hr { border-color: #1f2937; } html[data-theme="dark"] #status { background: #052e16; color: #e5e7eb; }
+html[data-theme="dark"] #canvasWrap { background: #0f172a; }
+html[data-theme="dark"] #routeSvg { filter: invert(.92) hue-rotate(180deg); }          /* 簡單反相：地圖線條在深色底上也看得清楚 */
+html[data-theme="dark"] #navBottom, html[data-theme="dark"] #navVoicePanel { background: #111827; color: #e5e7eb; }
+html[data-theme="dark"] #navBottom .info small { color: #9ca3af; }
+html[data-theme="dark"] #navRecenter { background: #1f2937; color: #93c5fd; }

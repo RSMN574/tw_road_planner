@@ -1,0 +1,43 @@
+// config.mjs — 伺服器設定：全部來自環境變數（可放在 .env，見 .env.example）。金鑰只存在伺服器端。
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// 簡單的 .env 讀取（不覆蓋已存在的環境變數；零依賴）
+export function loadDotEnv(file = path.join(ROOT, '.env')) {
+  if (!existsSync(file)) return false;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line); if (!m || line.trim().startsWith('#')) continue;
+    let v = m[2]; if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1);
+    if (process.env[m[1]] === undefined) process.env[m[1]] = v;
+  }
+  return true;
+}
+
+const num = (v, d) => { const x = Number(v); return v !== undefined && v !== '' && Number.isFinite(x) ? x : d; };
+const bool = (v, d) => v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(v);
+
+export function readConfig(env = process.env) {
+  const data = path.resolve(ROOT, env.DATA_DIR || 'data'), opt = (v, def) => path.resolve(data, v || def);      // 載入時才檢查是否存在（之後新增的檔案，重新載入就會生效）
+  return {
+    port: num(env.PORT, 8080), host: env.HOST || '0.0.0.0',
+    staticDir: path.resolve(ROOT, env.STATIC_DIR || 'dist'), dataDir: data,
+    cacheDir: path.resolve(env.CACHE_DIR || path.join(ROOT, '.cache')),
+    files: {                                                   // 選用資料：檔案存在才載入；網頁也會自動載入同一份
+      graph: path.join(data, 'graph'),
+      roadTable: opt(env.ROAD_TABLE, 'road-attrs.json'), bus: opt(env.BUS_GRAPH, 'bus/graph.json'),
+      metro: opt(env.METRO, 'metro.json'), youbike: opt(env.YOUBIKE, 'ubike.json')
+    },
+    tls: env.TLS_CERT && env.TLS_KEY ? { cert: env.TLS_CERT, key: env.TLS_KEY } : null,
+    trustProxy: bool(env.TRUST_PROXY, false),                  // 放在 Caddy／Nginx 後面時設 1，才會用 X-Forwarded-For 判斷用戶 IP
+    corsOrigins: (env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),   // 預設不開放跨網域（同網域的網頁不需要）
+    rateLimit: num(env.RATE_LIMIT_PER_MIN, 120), tdxRateLimit: num(env.TDX_RATE_LIMIT_PER_MIN, 60),
+    maxSnapM: num(env.MAX_SNAP_M, 1000), defaultAlgo: env.ROUTER || 'astar', altCache: num(env.ALT_CACHE, 12), warm: bool(env.WARMUP, true),
+    adminToken: env.ADMIN_TOKEN || '', watch: bool(env.WATCH_DATA, false), log: bool(env.LOG, true),
+    // TDX：向 token 端點（例如 rsmn574.com 的 POST /tokens）取得 token；掛在 server_2 裡時改由 server_2 的 token.txt 提供（見 server/express-mount.mjs）
+    tdx: { tokenUrl: env.TDX_TOKEN_URL || '', apiKey: env.TDX_API_KEY || '', ts: env.TDX_TS || '',
+           upstream: env.TDX_UPSTREAM || 'https://tdx.transportdata.tw/api/basic/v2', cacheMs: num(env.TDX_CACHE_MS, 15000), timeoutMs: num(env.TDX_TIMEOUT_MS, 10000) }
+  };
+}

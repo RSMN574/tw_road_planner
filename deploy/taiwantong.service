@@ -1,0 +1,24 @@
+# systemd：不用 Docker 時讓伺服器開機自動啟動、當掉自動重啟
+# 安裝：sudo cp deploy/taiwantong.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now taiwantong
+[Unit]
+Description=Taiwantong MaaS server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taiwantong
+WorkingDirectory=/opt/taiwantong
+ExecStartPre=/usr/bin/node build.mjs
+ExecStart=/usr/bin/node server/server.mjs
+Environment=NODE_ENV=production TRUST_PROXY=1 HOST=127.0.0.1
+EnvironmentFile=-/opt/taiwantong/.env
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

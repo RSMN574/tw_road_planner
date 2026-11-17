@@ -1,0 +1,27 @@
+# 一行部署：docker compose -f deploy/docker-compose.yml up -d
+# 需要：一個指到這台伺服器的網域（DOMAIN），80/443 埠對外開放。Caddy 會自動申請 HTTPS 憑證（手機 GPS 必須 HTTPS）。
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      - DATA_DIR=/data
+      - TRUST_PROXY=1
+    volumes:
+      - ../data:/data:ro          # 路網與選用資料（唯讀即可）
+    expose: ["8080"]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      - DOMAIN=${DOMAIN:?請設定 DOMAIN，例如 DOMAIN=maps.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+volumes:
+  caddy_data:
+  caddy_config:

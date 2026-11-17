@@ -1,0 +1,23 @@
+{
+  "name": "bus-planner",
+  "version": "1.7.0",
+  "private": true,
+  "type": "module",
+  "description": "台灣通 MaaS：台中道路圖 × 公車 × 捷運的路線規劃、手機 GPS 導航與伺服器 API（零依賴；可獨立執行或掛進 server_2）",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node build.mjs && node server/server.mjs",
+    "server": "node server/server.mjs",
+    "build": "node build.mjs",
+    "proxy": "node proxy.mjs",
+    "test": "node test/e2e.mjs && node test/ui.mjs && node test/t12_fresh.mjs && node test/net.mjs && node test/metro.mjs && node test/vehicle.mjs && node test/moa.mjs && node test/moa_random.mjs && node test/mode.mjs && node test/gps.mjs && node test/nav.mjs && node test/voice.mjs && node test/server.mjs && node test/transit-data.mjs && node test/nav-perf.mjs",
+    "bench:browser": "node test/bench-browser.cjs",
+    "pack": "node tools/pack-graph.mjs",
+    "bench:transit": "node --expose-gc test/bench-transit.mjs",
+    "tdx:audit": "node tools/tdx-audit.mjs",
+    "transit:sync": "node tools/transit-sync.mjs",
+    "test:browser": "node test/browser.cjs"
+  }
+}

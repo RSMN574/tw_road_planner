@@ -1,0 +1,6 @@
+# Caddy：自動 HTTPS（Let's Encrypt），反向代理到 Node 伺服器
+# 不用 Docker 時：把 app:8080 改成 127.0.0.1:8080，{$DOMAIN} 改成你的網域
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}
