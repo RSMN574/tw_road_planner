@@ -28,6 +28,18 @@ export function worldToScreen(x, y) {
   return [bx * State.view.scale + State.view.tx, by * State.view.scale + State.view.ty];
 }
 
+// ---- 相機旋轉（Heading Up）：只是呈現層——所有繪圖仍用「北朝上」的螢幕座標，最後整組以 (cx, cy) 為中心旋轉 -rot 度 ----
+// 使用者在螢幕上的點、拖曳量，要先「轉回」繪圖座標才能換算世界座標
+export function unrotate(sx, sy) {
+  const c = State.cam; if (!c || !c.rot) return [sx, sy];
+  const a = c.rot * Math.PI / 180, dx = sx - c.cx, dy = sy - c.cy;
+  return [c.cx + dx * Math.cos(a) - dy * Math.sin(a), c.cy + dx * Math.sin(a) + dy * Math.cos(a)];
+}
+export function panBy(dx, dy) { const c = State.cam, a = c && c.rot ? c.rot * Math.PI / 180 : 0; State.view.tx += dx * Math.cos(a) - dy * Math.sin(a); State.view.ty += dx * Math.sin(a) + dy * Math.cos(a); }
+export function zoomAt(mx, my, k) { const [x, y] = unrotate(mx, my); State.view.tx = x - (x - State.view.tx) * k; State.view.ty = y - (y - State.view.ty) * k; State.view.scale *= k; }
+export const clientToWorld = (sx, sy) => screenToWorld(...unrotate(sx, sy));
+const rotPrefix = () => { const c = State.cam; return c && c.rot ? `rotate(${(-c.rot).toFixed(2)} ${c.cx.toFixed(1)} ${c.cy.toFixed(1)}) ` : ''; };
+
 export function screenToWorld(sx, sy) {
   const bx = (sx - State.view.tx) / State.view.scale, by = (sy - State.view.ty) / State.view.scale;
   return [(bx - State.base.offX) / (State.base.kx * State.base.scale) + State.base.minX,
@@ -50,8 +62,9 @@ export function renderView() { if (State.renderFull || !shiftScene()) { State.re
 export function render() {                       // 只重繪，不重跑 dijkstra
   if (!State.base) { drawGrid(); return; }
   if (State.currentRoute) Hooks.drawRoute(State.currentRoute, false);
-  else { drawGrid(); Hooks.drawWidthLayer(); Hooks.drawBus(); Hooks.drawUbike(); drawMarkers(); Hooks.drawInspect(); if (Hooks.drawNav) Hooks.drawNav(); }
+  else { drawGrid(); Hooks.drawWidthLayer(); Hooks.drawBus(); Hooks.drawUbike(); drawMarkers(); Hooks.drawInspect(); if (Hooks.drawTransitPlan) Hooks.drawTransitPlan(); if (Hooks.drawNav) Hooks.drawNav(); }
   commitScene();
+  if (Hooks.syncMapUi) Hooks.syncMapUi();                       // 縮放層級、比例尺（map-view.js）
 }
 // 把剛畫好的內容收進 <g id="scene">，記下當時的視角（之後的快速平移以它為基準）；導航箭頭留在最上層、每次各自重畫
 function commitScene() {
@@ -60,6 +73,7 @@ function commitScene() {
   for (const c of [...svg.childNodes]) if (c.id !== 'navMarker') g.appendChild(c);
   svg.insertBefore(g, svg.firstChild);
   State.scene = g; State.drawnView = { tx: State.view.tx, ty: State.view.ty, scale: State.view.scale, w: svg.clientWidth, h: svg.clientHeight };
+  const r = rotPrefix(); if (r) g.setAttribute('transform', r.trim());
 }
 // 成功回傳 true；條件不符（沒有場景、視窗大小變了、縮放超過 2 倍、平移超過畫面 35%）回傳 false，由呼叫端完整重畫
 export function shiftScene() {
@@ -67,7 +81,7 @@ export function shiftScene() {
   if (!d || !g || !g.isConnected || svg.clientWidth !== d.w || svg.clientHeight !== d.h) return false;
   const k = v.scale / d.scale, ex = v.tx - d.tx * k, ey = v.ty - d.ty * k;
   if (k > 2 || k < 0.5 || Math.abs(ex + (k - 1) * d.w / 2) > d.w * 0.35 || Math.abs(ey + (k - 1) * d.h / 2) > d.h * 0.35) return false;
-  g.setAttribute('transform', k === 1 ? `translate(${ex.toFixed(1)} ${ey.toFixed(1)})` : `matrix(${k} 0 0 ${k} ${ex.toFixed(1)} ${ey.toFixed(1)})`);
+  g.setAttribute('transform', rotPrefix() + (k === 1 ? `translate(${ex.toFixed(1)} ${ey.toFixed(1)})` : `matrix(${k} 0 0 ${k} ${ex.toFixed(1)} ${ey.toFixed(1)})`));
   if (Hooks.drawNav) Hooks.drawNav();
   return true;
 }
@@ -113,6 +127,7 @@ export function drawGrid() {
   }
   g += '</g>';
   svg.insertAdjacentHTML('afterbegin', g);
+  if (Hooks.drawOsmBase) Hooks.drawOsmBase();                 // 全台 OSM 底圖（osm.js；伺服器有 OSM 道路圖時）
 }
 
 export function* allCoords(route) {

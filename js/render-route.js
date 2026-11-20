@@ -86,7 +86,8 @@ export function drawRoute(route, refit = true) {
   const NS = 'http://www.w3.org/2000/svg';
   const segs = [];
   let curName = null, startI = 0;
-  for (let i = 0; i < route.edgePath.length; i++) {
+  if (route._osm) for (const s of segmentsOf(route)) if (s.name) segs.push({ name: s.name, start: s.start, end: s.end });   // 伺服器 OSM 路線：依 way 路名分段
+  for (let i = 0; !route._osm && i < route.edgePath.length; i++) {
     const eid = State.adjEid[route.edgePath[i]];
     const names = eid != null ? State.edgeIdToRoadNames.get(eid) : null;
     const name = (names && names.size > 0) ? [...names][0] : null;
@@ -96,7 +97,7 @@ export function drawRoute(route, refit = true) {
       startI = i;
     }
   }
-  if (curName) segs.push({ name: curName, start: startI, end: route.edgePath.length });
+  if (curName && !route._osm) segs.push({ name: curName, start: startI, end: route.edgePath.length });
   route._roadSegs = segs;
 
   const cands = [];

@@ -5,6 +5,7 @@ import { buildGraphCore } from './graph-build.js';
 import { fileInput, fileList, fileName, fileZone, loaderProgress, loaderText, placeholder } from './dom.js';
 import { fitGraph, render, resetView } from './render-core.js';
 import { setHighlight, showStatus } from './ui-panels.js';
+import { osmFileNote, osmOn } from './osm.js';
 
 // ============================================================
 // 從分檔 JSON 建圖
@@ -99,6 +100,9 @@ export async function tryFetchAll() {
       showStatus(`❌ 建圖失敗：${err.message}`, 'error');
       console.error(err);
     }
+  } else if (osmOn()) {                                                        // 伺服器有全台 OSM 道路圖：本機路網是選用的
+    fileName.textContent = '沒有本機路網（使用全台 OSM 道路圖）';
+    fileList.innerHTML = ''; osmFileNote();                                    // 404 的紅字不必顯示
   } else {
     fileName.textContent = '自動載入失敗，請手動選擇 JSON 檔案';
     showStatus(`⚠ 自動載入失敗（可能是 file:// 協定限制）<br>請點上方「選擇 JSON 檔案」手動載入。`, 'error');

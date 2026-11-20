@@ -11,12 +11,12 @@ export function parseBus(json) {
   if (Array.isArray(nr)) nr = Object.fromEntries(nr.map(n => [n.node_uid ?? n.uid ?? n.id ?? n.stop_id, n]));
   const uids = Object.keys(nr), n = uids.length, idx = new Map(uids.map((u, i) => [u, i]));
   if (!n) throw new Error('找不到 nodes');
-  const b = { n, uids, stopIds: new Array(n), stopKind: new Array(n), names: new Array(n), lat: new Float64Array(n), lng: new Float64Array(n),
-              group: new Int32Array(n).fill(-1), members: [], routeLabels: [], routeKind: [] };
+  const b = { n, uids, stopIds: new Array(n), stopKind: new Array(n), stopLine: new Array(n).fill(null), names: new Array(n), lat: new Float64Array(n), lng: new Float64Array(n),
+              group: new Int32Array(n).fill(-1), members: [], routeLabels: [], routeKind: [], routeKeys: [] };
   const gmap = new Map();
   uids.forEach((u, i) => {
     const o = nr[u] || {};
-    b.names[i] = o.node_name || o.name || u; b.stopIds[i] = String(o.stop_id ?? o.stopId ?? ''); b.stopKind[i] = o.kind === 'metro' ? 'metro' : 'bus';
+    b.names[i] = o.node_name || o.name || u; b.stopIds[i] = String(o.stop_id ?? o.stopId ?? ''); b.stopKind[i] = o.kind === 'metro' ? 'metro' : 'bus'; b.stopLine[i] = o.line ?? null;
     b.lat[i] = parseFloat(o.latitude ?? o.lat); b.lng[i] = parseFloat(o.longitude ?? o.lng ?? o.lon);
     const g = o.station_group_id ?? o.station_id ?? null;
     if (g != null && g !== '') { let id = gmap.get(g); if (id === undefined) { id = b.members.length; gmap.set(g, id); b.members.push([]); } b.group[i] = id; b.members[id].push(i); }
@@ -33,7 +33,7 @@ export function parseBus(json) {
     const label = e.subroute_name || e.route_name || e.subroute_id || e.route_id || e.route || e.line || e.subroute_uid || e.route_uid || null;
     const key = e.subroute_uid || e.route_uid || e.subroute_id || e.route_id || label;
     let rid = -1;
-    if (key != null) { rid = rmap.get(String(key)); if (rid === undefined) { rid = b.routeLabels.length; rmap.set(String(key), rid); b.routeLabels.push(String(label ?? key)); b.routeKind.push(e.mode === 'metro' ? 'metro' : 'bus'); } }
+    if (key != null) { rid = rmap.get(String(key)); if (rid === undefined) { rid = b.routeLabels.length; rmap.set(String(key), rid); b.routeLabels.push(String(label ?? key)); b.routeKind.push(e.mode === 'metro' ? 'metro' : 'bus'); b.routeKeys.push(String(key)); } }
     const tt = (e.travel_times ?? e.travelTimes ?? e.times ?? []).map(t => Number(t.run_time)).filter(x => x > 0);
     F.push(i); T.push(j); D.push(d); R.push(rid); TM.push(tt.length ? tt.reduce((x, y) => x + y, 0) / tt.length : d / BUS_MPS);
   };
@@ -60,10 +60,10 @@ export function buildCSR(n, F, T, R, TM, D) {
 // 合併兩份解析後的公車圖（例如 公車 ＋ 捷運）
 export function mergeParsed(a, b) {
   const cat = (A, B, C) => { const c = new C(A.length + B.length); c.set(A); c.set(B, A.length); return c; }, gOff = a.members.length, rOff = a.routeLabels.length;
-  const m = { n: a.n + b.n, uids: [...a.uids, ...b.uids], stopIds: [...a.stopIds, ...b.stopIds], names: [...a.names, ...b.names], stopKind: [...a.stopKind, ...b.stopKind],
+  const m = { n: a.n + b.n, uids: [...a.uids, ...b.uids], stopIds: [...a.stopIds, ...b.stopIds], names: [...a.names, ...b.names], stopKind: [...a.stopKind, ...b.stopKind], stopLine: [...(a.stopLine || new Array(a.n).fill(null)), ...(b.stopLine || new Array(b.n).fill(null))],
     lat: cat(a.lat, b.lat, Float64Array), lng: cat(a.lng, b.lng, Float64Array),
     group: cat(a.group, Int32Array.from(b.group, g => g < 0 ? -1 : g + gOff), Int32Array),
-    members: [...a.members, ...b.members.map(ms => ms.map(i => i + a.n))], routeLabels: [...a.routeLabels, ...b.routeLabels], routeKind: [...a.routeKind, ...b.routeKind] };
+    members: [...a.members, ...b.members.map(ms => ms.map(i => i + a.n))], routeLabels: [...a.routeLabels, ...b.routeLabels], routeKind: [...a.routeKind, ...b.routeKind], routeKeys: [...(a.routeKeys || a.routeLabels), ...(b.routeKeys || b.routeLabels)] };
   const F = [], T = [], R = [], TM = [], D = [];
   for (const [x, off, ro] of [[a, 0, 0], [b, a.n, rOff]]) for (let i = 0; i < x.n; i++) for (let e = x.off[i]; e < x.off[i+1]; e++) { F.push(i + off); T.push(x.eTo[e] + off); R.push(x.eRoute[e] < 0 ? -1 : x.eRoute[e] + ro); TM.push(x.eTime[e]); D.push(x.eDist[e]); }
   return Object.assign(m, buildCSR(m.n, F, T, R, TM, D));
@@ -108,6 +108,7 @@ export function diagnoseBus() {                          // 比較幾種常見�
     table: rows.map(r => ({ 方案: r.name, 中位數m: isFinite(r.med) ? +r.med.toFixed(1) : null, P90m: isFinite(r.p90) ? +r.p90.toFixed(1) : null, '50m內': Math.round((r.within50 || 0) * 100) + '%' })) };   // 站點全在路網外時沒有樣本（med 為空）：不能讓建圖失敗
 }
 
+const METRO_FIX = { swap: false, unit: null, dE: 0, dN: 0 };
 export function projectBusStops() {                      // 站點經緯度 → 道路圖座標系；建站點格網索引
   if (!State.bus || !State.N || State.coordType === 'unknown') return false;
   diagnoseBus();
@@ -116,7 +117,8 @@ export function projectBusStops() {                      // 站點經緯度 → 
   const cell = isGeo() ? 0.005 : WALK_MAX_M / State.projUnit, grid = new Map(); State.bus.cell = cell; State.bus.grid = grid;
   for (let i = 0; i < State.bus.n; i++) {
     if (!isFinite(State.bus.lat[i]) || !isFinite(State.bus.lng[i])) { State.bus.x[i] = State.bus.y[i] = NaN; continue; }
-    [State.bus.x[i], State.bus.y[i]] = stopXY(i, State.busFix, State.projUnit);
+    // 捷運站（TDX 標準 WGS84）不套用「公車資料」的座標修正（欄位對調、TWD67 偏移）——那些修正只針對公車檔，套到捷運會把車站搬走
+    [State.bus.x[i], State.bus.y[i]] = stopXY(i, State.bus.stopKind[i] === 'metro' ? METRO_FIX : State.busFix, State.projUnit);
     const key = Math.floor(State.bus.x[i]/cell) * 100000 + Math.floor(State.bus.y[i]/cell);
     let a = grid.get(key); if (!a) grid.set(key, a = []); a.push(i);
   }
@@ -139,7 +141,11 @@ export function nearbyStops(x, y, limit = 6, maxM = WALK_MAX_M, mode = 'out') { 
       const dm = worldDistM(x, y, State.bus.x[i], State.bus.y[i]); if (dm <= maxM && (mode === 'any' || (mode === 'out' ? State.bus.off[i+1] > State.bus.off[i] : State.bus.inDeg[i] > 0))) out.push({ i, dm });
     }
   }
-  return out.sort((a, b) => a.dm - b.dm).slice(0, limit);
+  out.sort((a, b) => a.dm - b.dm);
+  // 公車站很密時，「最近幾站」常常全是公車站，稍遠的捷運站就被排除、捷運不能當第一段或最後一段 → 範圍內最近的 2 個捷運站一定保留
+  const top = out.slice(0, limit), kind = State.bus.stopKind;
+  if (kind) { let k = 0; for (const o of out.slice(limit)) if (kind[o.i] === 'metro' && k < 2) { top.push(o); k++; } }
+  return top;
 }
 
 

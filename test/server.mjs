@@ -1,10 +1,11 @@
 // 伺服器：靜態檔（壓縮、ETag、白名單）、API（統一格式、錯誤碼、快取、限流）、TDX 代理（token 快取、去重、401 重試、金鑰不外流）、熱重載、大眾運輸、多運具
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const origLog = console.log, origInfo = console.info, origWarn = console.warn; console.info = () => {}; console.warn = () => {};
 const { createApp } = await import('../server/server.mjs'); const { readConfig } = await import('../server/config.mjs'); const engine = await import('../server/engine.mjs');
 const { lonLatToTWD97: tw } = await import('../js/geo.js'); const { simplify } = engine;

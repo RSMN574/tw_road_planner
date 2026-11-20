@@ -17,11 +17,13 @@ const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : (typeof v ==
 const hav = (a, b) => { const R = 6371000, r = d => d * Math.PI / 180, x = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lon - a.lon) / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
 // 沒有 S2STravelTime 時的推估參數（結果一律標示「推估」）
 export const METRO_EST = { mps: 9.7, curve: 1.15, dwellS: 30 };
+// TDX Metro/LineTransfer 只接受這些業者（TDX 自己的錯誤訊息：「RailSystem: 'TMRT' is not accepted but TRTC, KRTC, TYMC, NTMC」）；其他業者不算「缺資料」
+export const LINE_TRANSFER_OPS = ['TRTC', 'KRTC', 'TYMC', 'NTMC'];
 
 export function buildMetro(raw, { operator = null, fetchedAt = null } = {}) {
   const warnings = [], missing = [], cnt = {}, add = k => { cnt[k] = (cnt[k] || 0) + 1; };
   const has = k => Array.isArray(raw[k]) && raw[k].length > 0;
-  for (const [k, label] of [['station', 'Station（車站）'], ['s2s', 'S2STravelTime（站間行駛時間）'], ['frequency', 'Frequency（班距）'], ['firstLast', 'FirstLastTimetable（首末班車）'], ['lineTransfer', 'LineTransfer（站內轉乘）'], ['stationExit', 'StationExit（出入口）']]) if (!has(k)) missing.push(label);
+  for (const [k, label] of [['station', 'Station（車站）'], ['s2s', 'S2STravelTime（站間行駛時間）'], ['frequency', 'Frequency（班距）'], ['firstLast', 'FirstLastTimetable（首末班車）'], ['lineTransfer', 'LineTransfer（站內轉乘）'], ['stationExit', 'StationExit（出入口）']]) if (!has(k) && !(k === 'lineTransfer' && operator && !LINE_TRANSFER_OPS.includes(operator))) missing.push(label);
   if (!has('stationOfRoute') && !has('stationOfLine')) missing.push('StationOfRoute／StationOfLine（站序）');
 
   // ---- 車站 ----

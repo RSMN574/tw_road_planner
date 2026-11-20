@@ -31,7 +31,7 @@ loadBus({nodes:bn,adjacency:{BA:[{to:'BB',distance_meters:4200,route_name:'B1',r
 loadMetro(metro);
 const b=S.bus;log('② 合併後：',b.n,'站（公車 2 + 捷運 18）｜路線：',b.routeLabels.map((l,i)=>l+'['+b.routeKind[i]+']').join('、'));
 log('   狀態列：',els.metroStat.innerHTML.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,150));
-const iG9=b.names.indexOf('市政府'),iBB=b.names.indexOf('公車終點(近市政府站)');log('   市政府站與公車站同站群（可步行轉乘）=',b.group[iG9]>=0&&b.group[iG9]===b.group[iBB],'｜捷運站未被吸附到道路（sx==x）=',b.sx[iG9]===b.x[iG9]);
+const iG9=b.names.indexOf('市政府'),iBB=b.names.indexOf('公車終點(近市政府站)');log('   市政府站與公車站有步行轉乘連結 =',!!(b.xfer&&(b.xfer.get(iG9)||[]).some(l=>l.to===iBB)),'｜捷運站未被吸附到道路（sx==x）=',b.sx[iG9]===b.x[iG9]);
 // ③ 多方案
 const o=suggestBusMulti(S.nodeXY[0*5+2],S.nodeXY[0*5+3],S.nodeXY[1*5+2],S.nodeXY[1*5+3]);
 const flow=x=>x.rides.map(r=>(routeKindOf(r)==='metro'?'🚇':'🚌')+r.label+'('+(r.stops.length-1)+'站)').join(' → ');
@@ -45,8 +45,8 @@ fetchCalls=[];Object.assign(TDX,{apiKey:'K',backoffMs:1});
 const mixed=o.find(x=>x.rides.some(r=>routeKindOf(r)==='metro')&&x.rides.length>1)||mo;const a=await annotateJourney(mixed,Date.now());
 const apiCalls=fetchCalls.filter(u=>u.includes('Taichung')||u.includes('tokens'));
 log('⑤ annotate 含捷運的方案：TDX 呼叫',apiCalls.length,'次，其中捷運路線',apiCalls.filter(u=>u.includes(encodeURIComponent('捷運綠線'))).length,'次（應為 0）｜捷運段候車來源 =',a.legs.find(l=>l.metro)?.waitSrc,'｜備註 =',a.legs.find(l=>l.metro)?.notes[0]);
-// ⑥ 時刻表搜尋不納入捷運
-fetchCalls=[];const net=await ttSearch('raptor',true);log('⑥ 時刻表搜尋納入的路線：',net.net.labels.join(',')||'(無)','｜是否含捷運 =',net.net.labels.includes('捷運綠線'));
+// ⑥ 時刻表搜尋：捷運以班距納入（公車才向 TDX 取時刻表）
+fetchCalls=[];const net=await ttSearch('raptor',true);log('⑥ 時刻表搜尋納入的路線：',net.net.labels.join(',')||'(無)','｜是否含捷運 =',net.net.labels.includes('捷運綠線'),'｜捷運方向數 =',net.net.metro.n);
 // ⑦ 繪圖：捷運站與線一直顯示
 S.view={tx:0,ty:0,scale:1};drawn.length=0;drawBusDots();const col=drawn.filter(d=>d.t==='path').map(d=>d.a.stroke);log('⑦ scale=1 繪製：捷運站(#15803d)',col.includes('#15803d'),'｜捷運線(#16a34a)',col.includes('#16a34a'),'｜公車站點(#a78bfa，放大後才顯示)',col.includes('#a78bfa'));
 process.exit(0);

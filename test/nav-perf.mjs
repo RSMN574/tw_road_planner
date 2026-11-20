@@ -53,14 +53,17 @@ console.log('① 轉錯路口：方向與路線差很多 → 更快確認偏航�
   ok('平行偏移 25 m（方向一致）：不會誤判偏航', !ev.includes('reroute-request'), ev.filter(x => x !== 'update').join(',') || '沒有事件');
 }
 
-console.log('② ETA 依實際行駛速度修正');
-{ const runAt = v => { const eng = new NavigationEngine(), f = new GpsFilter(); eng.start(route, man, spd); const st = []; for (const r of drive({ v, sigma: 2, seed: 4 })) { const x = f.process(r); if (x.accepted) st.push(eng.update(x.fix)); } return st; };
-  const slow = runAt(5), norm = runAt(10), at = (st, frac) => st.find(s => s.s >= total * frac);
+console.log('② ETA 依實際行駛速度修正（分段模型＋本趟實際比例；詳細的誤差統計見 nav-eta.mjs）');
+{ const { EtaModel, EtaSmoother } = await import('../js/eta-engine.js');
+  const runAt = (v, withModel = true) => { const eng = new NavigationEngine(), f = new GpsFilter(); eng.start(route, man, spd, withModel ? { model: (r, t, m) => new EtaModel(r, t, m, 'car'), smoother: new EtaSmoother() } : {}); const st = []; for (const r of drive({ v, sigma: 2, seed: 4 })) { const x = f.process(r); if (x.accepted) st.push(eng.update(x.fix)); } return st; };
+  const slow = runAt(4), norm = runAt(9), at = (st, frac) => st.find(s => s.s >= total * frac);
   const a = at(slow, 0.6), b = at(norm, 0.6);
-  ok('照速限行駛：修正係數接近 1', Math.abs(b.etaFactor - 1) < 0.12, b.etaFactor.toFixed(2));
-  ok('只開到一半的速度：剩餘時間往上修正（但不超過上限）', a.etaFactor > 1.3 && a.etaFactor <= 2.5 && a.remainingS > a.remainingPlanS * 1.3, `係數 ${a.etaFactor.toFixed(2)}，剩 ${Math.round(a.remainingS)} 秒（原估 ${Math.round(a.remainingPlanS)} 秒）`);
-  const early = slow.find(s => s.s > 50); ok('剛出發（資料不足 60 秒／200 m）：不修正', early.etaFactor === 1);
-  ok('ETA 時間點＝定位時間＋修正後的剩餘時間', Math.abs(a.etaMs - (a.fix.timestamp + a.remainingS * 1000)) < 1);
+  ok('照模型預期的速度行駛：修正係數接近 1', Math.abs(b.etaFactor - 1) < 0.15, b.etaFactor.toFixed(2));
+  ok('開得比預期慢很多：剩餘時間往上修正（與模型加權，不是直接用 GPS 速度換算）', a.etaFactor > 1.1 && a.etaFactor <= 2.5 && a.rawRemainingS > b.rawRemainingS * 1.2, `係數 ${a.etaFactor.toFixed(2)}，剩 ${Math.round(a.rawRemainingS)} 秒（模型原估 ${Math.round(a.remainingPlanS)} 秒；正常速度者 ${Math.round(b.rawRemainingS)} 秒）`);
+  const early = slow.find(s => s.s > 50); ok('剛出發（資料不足）：不用本趟比例修正', early.eta.parts.tripAdj === 0);
+  ok('ETA 時間點＝定位時間＋平滑後的剩餘時間', Math.abs(a.etaMs - (a.fix.timestamp + a.remainingS * 1000)) < 1);
+  ok('有估計區間與可信度', a.eta.lowS < a.rawRemainingS && a.eta.highS > a.rawRemainingS && !!a.eta.confidence);
+  const c = at(runAt(4, false), 0.6); ok('沒有注入模型（備援）：仍會依本趟實際比例往上修正，可信度標「低」', c.etaFactor > 1.2 && c.eta.confidence === 'low', c.etaFactor.toFixed(2));
 }
 
 console.log('③ 語音提示距離隨車速放大');

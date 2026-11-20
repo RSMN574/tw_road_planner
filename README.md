@@ -1,6 +1,6 @@
 # 智慧公車路線規劃系統（bus-planner）
 
-以**道路圖論**為基礎，結合**車種規則與速限、道路寬度／型態、YouBike、台中公車與捷運、TDX 即時資料**，在瀏覽器裡完成路線搜尋、公車路線建議與地圖分析。**零依賴、純前端**，沒有後端也沒有 npm 套件。
+以**道路圖論**為基礎（v1.11.0：全台 OSM 路網＋台鐵／高鐵／捷運／輕軌／公車多運具規劃＋z21 2D／3D 地圖，見文末），結合**車種規則與速限、道路寬度／型態、YouBike、台中公車與捷運、TDX 即時資料**，在瀏覽器裡完成路線搜尋、公車路線建議與地圖分析。**零依賴、純前端**，沒有後端也沒有 npm 套件。
 
 ## 能做什麼
 
@@ -117,7 +117,7 @@ index.html   css/app.css   js/*.js   test/   build.mjs   proxy.mjs   data/
 
 ```bash
 npm run build   # 產生 dist/index.html（單檔、可離線雙擊開啟）
-npm test        # 8 組測試，只用 Node 內建功能與 DOM 替身
+npm test        # 20 組測試，只用 Node 內建功能與 DOM 替身（瀏覽器測試見下方各節：test/browser*.cjs）
 ```
 
 ## 已知限制與假設
@@ -312,3 +312,255 @@ node tools/transit-sync.mjs                   # 抓資料並印出統計與警�
 | 導航中每秒主執行緒耗時（CPU×4） | 82 ms | 127 ms（箭頭動畫；關掉動畫約 72 ms） |
 
 執行方式：`NODE_PATH=$(npm root -g) node test/bench-browser.cjs <路網資料夾>`。加 `CPU=4` 模擬手機，加 `DIST=<資料夾>` 量測其他版本的網頁。
+
+## 修復：大眾運輸結果沒有捷運（v1.7.1）
+
+### 原因（都已修正）
+1. **時刻表搜尋（RAPTOR／CSA）完全排除捷運**（`js/timetable.js` 原本寫明「捷運沒有時刻資料，不納入」）：只要用時刻表搜尋，就不可能出現捷運。→ 捷運改以班距加入：RAPTOR 在上車站以「平均候車＝班距的一半」上車；CSA 在搜尋時段內以班距產生等間隔的推估班次。metro.json 有 TDX `Frequency`、`FirstLastTimetable` 時，依時段取班距、收班後不能搭、首班前會等首班。沒有這些資料時標示「班距推估」與「營運時間未知」。
+2. **公車資料的座標修正被套到捷運站**（`js/bus-core.js`）：公車檔需要「經緯度對調」或「TWD67 偏移」時，系統自動採用的修正連捷運站也一起套用，捷運站被搬走（對調時偏了 8,500 公里），之後所有方案都沒有捷運，也沒有任何錯誤訊息。→ 修正只套用在公車站。
+3. **捷運站常被「最近 6 站」排除**：公車站很密時，起終點附近的候選全是公車站。測試城市裡，離捷運站 200～480 m 的起點有 93% 選不到捷運站，捷運只能透過「先搭公車再轉」才用得到。→ 範圍內最近的 2 個捷運站一定保留為候選。
+4. **捷運跨線沒有轉乘**：以前只連「捷運 ↔ 公車」，跨線只能經由公車。→ 不同路線、相距 300 m 內的車站建立轉乘連結；有 TDX `LineTransfer` 就用它的轉乘時間。不依站名判斷。
+5. **轉乘時間是固定的 90 秒**（把捷運站併進公車站群），而且只併進一個站群。→ 改為逐一連結。每條連結的距離取道路圖上的步行距離，時間＝步行距離 ÷ 步速＋進出站 90 秒（跨線為換月台 120 秒），兩者都是推估值。起點走進捷運站、在捷運站下車走到終點，也都加上進出站時間。
+6. **捷運檔載入失敗被吞掉**：伺服器上 `loadMetro` 失敗時沒有往外丟錯誤，健康檢查仍顯示「捷運已載入」。→ 現在會丟出錯誤，`data.metro` 顯示 false，`warnings` 列出原因。網頁上也會顯示原因。
+7. **狀態列停在「載入道路圖後生效」**：道路圖比捷運資料晚載入時，捷運狀態不會更新。→ 道路圖載入後重新整理狀態。
+
+### API 新增（原有欄位不變）
+`/api/v1/transit` 的每個方案多了 `legs`，依序是 `WALK`、`BUS_RIDE`、`METRO_RIDE`、`TRANSFER`。乘車段有 `route`、`lineId`、上下車站、站數、`rideS`、`waitS` 和資料來源；轉乘與步行段有步行距離、時間和來源。`rides[]` 的捷運段多了 `lineId`，站點多了 `line`。
+`/api/v1/health` 的 `data.transit` 列出捷運站數、捷運邊數、捷運↔公車轉乘數、跨線轉乘數、孤立捷運站、沒有轉乘的捷運站，以及捷運資料來源。
+
+### metro.json 可以是 TDX 原始物件
+`{ "Stations": [...], "StationOfLine": [...], "S2STravelTime": [...], "LineTransfer": [...], "Frequency": [...], "FirstLastTimetable": [...] }`
+只有 `Stations` 是必要的。有 `StationOfLine` 用真正的站序，有 `S2STravelTime` 用真正的站間時間，其餘欄位見上文；缺少的部分一律標示為推估。
+
+測試：`test/metro-transit.mjs`（含六種情境），瀏覽器測試 `NODE_PATH=$(npm root -g) node test/browser-metro.cjs`。
+
+## v1.8.0：導航 ETA／剩餘距離／自動鏡頭、背景執行緒、捷運真實資料、YouBike 接駁
+
+### 導航：剩餘距離與 ETA
+**以前的算法（問題所在）**
+- ETA＝路線每段長度 ÷ 速限，全程自由車流；沒有轉彎、號誌、路口等待 → 系統性**估得太早**（模擬中平均偏早 2.5 分鐘）。
+- 出發 60 秒／200 m 後才乘上「實際÷預估」係數，而且沒有平滑 → 一筆定位就能讓 ETA 跳 3～7 分鐘。
+- 進度只要投影到路線前方就接受：GPS 往前跳一次，剩餘距離就永久少掉那一段；精度很差的定位也能推進度。
+- 定位中斷時沒有任何標示；ETA 時刻以最後一筆定位時間為準。
+
+**現在的算法**
+- 剩餘距離：GPS 投影到路線 Polyline（mapmatch.js 的視窗投影、累積距離），**沿路線**算到終點；不使用直線距離。
+  進度防護：大幅前進要連續 2 筆一致才接受、倒退超過 max(25 m, 精度) 要連續 3 筆、精度不足或離路線太遠的定位不推進度；重新規劃後進度歸零重算。
+- ETA（`js/eta-engine.js`）：`剩餘時間 = Σ(路段長度 ÷ 路段預估速度) + 轉向延遲 + 路口等待 + 交通延遲`
+  - 路段預估速度＝min(速限, 車種上限) × 道路類別的車流係數（依車種），有本機歷史紀錄時與歷史速度加權（`js/trip-log.js`，尖峰／離峰分開，只存在這支手機）。
+  - 轉向延遲（左／右／迴轉，依車種）、路口等待（依路口岔數），機車左轉兩段式較久、步行不加轉向延遲。
+  - **交通延遲＝0**：目前沒有即時路況來源，不捏造；畫面註明「未含即時路況」。
+  - 近程修正：用平滑後的實際速度修正前方 1 km（±50%，有上下限）；本趟修正：走過 500 m 以上後，以「實際耗時÷模型耗時」加權（權重 ≤ 0.5）。**不會**只用 GPS 速度除剩餘距離。
+  - 停等中：已經等過的時間先抵掉模型裡的路口等待，不會停多久 ETA 就延後多久。
+  - 不確定範圍（約 80%）與可信度（高／中／低，依速限資料覆蓋率、歷史資料、距離）。
+- 穩定性：平滑器（小變動死區、持續同方向的大變動快速跟上）、異常定位不更新、定位失效時保留最後估算並顯示「⚠ 定位異常」、顯示最後更新時間。
+
+**模擬量測**（`node test/nav-eta.mjs`；地面真值含號誌、轉彎延遲、壅塞，GPS 雜訊 σ=4 m，固定種子可重現；數字只代表這套模擬）
+
+| 情境 | 舊 MAE／MAPE | 新 MAE／MAPE | 剩餘距離平均誤差 舊→新 | 每筆 ETA 跳動最大 舊→新 |
+|---|---|---|---|---|
+| 一般市區（5.75 km） | 153 秒／22.3% | 67 秒／11.6% | 5.6 → 4.1 m | 212 → 25 秒 |
+| GPS 跳點（未過濾） | 129 秒／19.4% | 35 秒／7.6% | 46.0 → 4.8 m（最大 445 → 19 m） | 214 → 8 秒 |
+| 連續 12 個轉彎 | 144 秒／18.5% | 43 秒／9.5% | 5.7 → 4.0 m | 222 → 26 秒 |
+| 長距離 14 km | 261 秒／18.2% | 114 秒／8.5% | 10.6 → 4.4 m | 442 → 28 秒 |
+| 中段壅塞（模型不知道） | 217 秒／24.0% | 134 秒／19.7% | 6.6 → 4.5 m | 212 → 25 秒 |
+| 機車／腳踏車／步行 MAPE | 24.1%／16.2%／4.3% | 17.1%／11.4%／2.9% | — | — |
+
+真實道路上的誤差請用實際紀錄量：導航畫面「⬇ 下載行程紀錄」→ `node tools/eta-eval.mjs 紀錄.json`（以實際抵達時間為真值，算 MAE／MAPE、各可信度的誤差）。
+
+### 導航：自動鏡頭（`js/camera.js`）
+- 方向：北朝上／車頭朝上（導航畫面 🧭 切換）；GPS 行進方向為主，低速時鎖定、停止時用手機指南針（`js/compass.js`，iOS 需在點「開始導航」時授權），精度 > 30 m 暫停更新；方向低通平滑，旋轉每秒最多 60°。
+- 縮放：依車速決定前方要看多遠；接近轉彎時放大到路口（複雜路口再放大一點），通過 2.5 秒後恢復；目標縮放有 15% 遲滯、2 秒冷卻，同一個路口只放大一次。
+- 傾斜：車頭朝上、跟隨中、時速 ≥ 4 m/s 時 25° 透視（CSS 3D，自動放大到蓋滿畫面）；低於 1.5 m/s 持續 3 秒才放平。設定裡可關閉。
+- 手動拖曳或縮放：立即放平、停止跟隨，按「◎ 回到定位」恢復。
+- 效能：旋轉 ≥ 2°、縮放 ≥ 1.5% 才更新地圖（小變化 0.6 秒後一次補上）；縮放累積超過 35% 才完整重畫；ETA 文字每秒更新但不重畫地圖。
+
+**地圖效能**（`test/bench-browser.cjs`，90,000 節點路網、Chromium 手機視窗、CPU×4 模擬手機、導航 40 筆定位；前後各量 2 次取平均）
+
+| 項目 | v1.7.1 | v1.8.0（車頭朝上＋傾斜，預設） | v1.8.0（北朝上、不傾斜） |
+|---|---|---|---|
+| 畫面更新率 | 60 fps | 60 fps | 60 fps |
+| 第 99 百分位每幀時間 | 16.8 ms | 16.8 ms | 16.8 ms |
+| 超過 50 ms 的幀（40 秒內） | 1 | 1 | 1 |
+| 每筆定位主執行緒耗時 | 119 ms | 123 ms | 110 ms |
+| 　其中排版＋樣式 | 14 ms | 23 ms | 16 ms |
+| JS heap（導航中，GC 後） | 26.2 MB | 25.7 MB | 25.7 MB |
+| 偏航到重新規劃完成的主執行緒耗時 | 908 ms | 1,209 ms | 829 ms |
+
+車頭朝上時，轉彎要逐幀旋轉地圖，排版成本較高；直線行駛時的方向小抖動不會觸發更新。
+
+### 伺服器：路線計算改在背景執行緒
+- `WORKERS`（獨立伺服器）／`BUS_PLANNER_WORKERS`（掛在 server_2）：預設 1 個 worker_threads 執行緒，路網只載入在背景執行緒，主執行緒只處理網頁、TDX 代理、快取與排隊 → 一次很久的搜尋不會卡住同一個 Node 程序裡的其他請求（server_2 的其他 API）。
+- 設 N 個執行緒時依忙碌程度分配，每個執行緒各有一份路網（記憶體約 N 倍）。`WORKERS=0` 回到主執行緒同步計算。
+- 單次計算超過 `WORKER_TIMEOUT_MS`（預設 60 秒）回 504 並重開該執行緒；執行緒當掉會自動重開並重新載入路網。錯誤碼（400／404／422…）跨執行緒照舊。
+- `/api/v1/health` 多了 `compute`（模式、執行緒數、忙碌數、工作數、重開次數、平均耗時）。
+- 測試（`test/server-workers.mjs`，19,600 節點）：6 個同時的長路線，主執行緒最長卡住 177～244 ms（同步）→ 7～12 ms（背景執行緒）；計算中 health 1 ms 回應；結果與同步計算逐字相同。
+
+### 捷運真實資料（TDX）
+- `transit-sync` 遇到 **HTTP 429（API rate limit exceeded）** 會依 `Retry-After`（沒有就 2、4、8、16 秒）重試最多 4 次，請求之間至少間隔 1.2 秒。
+- 台中捷運不再請求 `LineTransfer`（TDX 回 400：只接受 TRTC、KRTC、TYMC、NTMC），也不再列為「缺少」。
+- 新增同步 `ODFare`（票價，每週）。
+- **產生 data/metro.json**：`node tools/transit-sync.mjs --metro-json`，或 `node tools/metro-json.mjs`（`--check` 只檢查；`--s2s 檔案.json` 等可改用手動下載的 TDX JSON）。內容是 TDX 原始欄位（Stations、StationOfLine、S2STravelTime、Frequency、FirstLastTimetable、StationExit、ODFare），舊檔備份成 `.bak`。
+- 站間時間＝`RunTime＋StopTime`；全部站間都有 TDX 資料時，畫面與 API 的來源改為「TDX S2STravelTime」。
+- 票價：只取 TDX 的成人票（`TicketType` 1＝單程票、3＝電子票證；`FareClass` 1＝成人），捷運段顯示票價；API 的 `METRO_RIDE` 多 `fare: { adultSingle, adultCard, currency, source }`。公車沒有票價資料，不顯示。
+
+### 大眾運輸：YouBike 接駁
+- 有 YouBike 站點資料（`data/ubike.json`）時，大眾運輸方案會考慮：起點走到借車站 → 騎 → 還車站 → 上車站；下車站 → 借車 → 騎 → 還車站 → 終點；或兩頭都騎。
+- 騎乘時間在道路網上計算（腳踏車禁行路段除外），與導航的腳踏車模型相同；借、還車各加 60 秒。都是推估，**沒有即時可借車輛／空位**資料。
+- 起點或終點走路 500 m 內沒有任何站時，騎車是唯一的方案來源；其他情況只在騎車方案沒有被其他方案全面勝過（Pareto）時列出。
+- 畫面：方案列表顯示「🚲 YouBike 距離（借車站 → 還車站，約 N 分）」，地圖以橘色畫出騎乘路線；方案區有「🚲 YouBike 接駁」開關。
+- API：`/api/v1/transit` 預設考慮（`ubike=0` 關閉）；方案多 `access`／`egress`（`walk` 或 `ubike`），分段多 `BIKE`（借還車站、距離、時間、路線幾何）。
+- 目前只做第一／最後一哩；行程中間「下公車改騎 YouBike 再轉捷運」尚未加入。
+
+### 新增與修改的檔案
+- 新增：`js/eta-engine.js`、`js/trip-log.js`、`js/camera.js`、`js/compass.js`、`server/backend.mjs`、`server/route-worker.mjs`、`server/transit/metro-json.mjs`、`tools/metro-json.mjs`、`tools/eta-eval.mjs`
+- 測試：`test/nav-eta.mjs`、`test/eta-sim.mjs`、`test/fixtures/legacy-navigation.mjs`、`test/server-workers.mjs`、`test/metro-json.mjs`、`test/ubike-transit.mjs`、`test/browser-ubike.cjs`
+- 修改：`js/navigation.js`、`js/nav-ui.js`、`js/render-core.js`、`js/render-layers.js`、`js/ui-touch.js`、`js/ui-events.js`、`js/ui-panels.js`、`js/bus-plan.js`、`js/transit.js`、`js/tdx.js`、`js/constants.js`、`js/vehicle.js`、`server/server.mjs`、`server/config.mjs`、`server/engine.mjs`、`server/express-mount.mjs`、`server/transit/snapshot.mjs`、`server/transit/metro-provider.mjs`、`tools/transit-sync.mjs`、`index.html`、`css/app.css`、`.env.example`、`package.json`
+
+## v1.9.0：用 OpenStreetMap 建立全台灣道路圖（第一階段：資料、拓樸、通行規則、轉向限制）
+
+這一階段建立「可以做路徑搜尋的 OSM 道路圖」與驗證工具；網頁、API、地圖與 GPS 導航在 v1.10.0 接上（見下一節）。
+
+### 步驟（在伺服器上執行）
+```bash
+sudo apt install osmium-tool          # 建議：先篩選道路，建圖快很多（沒有也可以，結果相同）
+npm run osm:download                  # 下載 Geofabrik taiwan-latest.osm.pbf，驗證 MD5，存成 data/osm/raw/taiwan-YYYYMMDD.osm.pbf
+npm run osm:build                     # 建圖 → data/osm/graph/YYYYMMDD/（osm-graph.twosm、manifest.json、report.json、report.md）
+npm run osm:route -- --from 24.1477,120.6736 --to 24.1631,120.6476 --profile car,moto,bike,foot
+OSM_REAL_PBF=data/osm/raw/taiwan-YYYYMMDD.osm.pbf npm run test:osm-real   # 讀取器與 libosmium 逐筆比對（需 pip install osmium）
+```
+- 用瀏覽器手動下載的 `taiwan-*.osm.pbf`：放進 `data/osm/raw/` 直接執行 `npm run osm:build`（會自動找到最新的檔並補記錄），或 `npm run osm:build -- --pbf "檔案路徑"`；加 `--md5 <Geofabrik 網頁上的值>`（或把 `.md5` 檔放在旁邊）會先驗證完整性；已經登記過的檔案之後再加 `--md5` 也可以，驗證結果會記進下載紀錄（`md5Verified`）。
+- Windows PowerShell：`npm run osm:route -- --from 25.0478,121.5170 …` 這種寫法也可以用（PowerShell 會吃掉 `--`、把逗號拆開，工具會依內容認回座標、運具、`.pbf` 路徑、MD5）。想避開這個問題可以直接用 node，值加引號：`node tools/osm/osm-route.mjs --from "25.0478,121.5170" --to "25.0340,121.5645" --profile "car,moto,foot"`。座標寫成「經度,緯度」會自動對調並提醒。
+- 原始 PBF 一律保留（檔名用 PBF 表頭的資料時間，不覆蓋舊檔）；`data/osm/raw/manifest.json` 記錄來源網址、下載時間、Last-Modified、ETag、大小、MD5（Geofabrik 提供的與實際計算的）、PBF 資料時間與序號。MD5 不符會刪掉下載的檔案。
+- 建圖前會再驗證一次原始檔 MD5；每次建置放在自己的日期資料夾，最後才更新 `data/osm/graph/current.json`。
+- 不會把 PBF 轉成大型 GeoJSON；整條流程都是串流讀檔＋型別陣列。
+
+### 道路拓樸（`server/osm/topology.mjs`）
+- 頂點只來自 OSM node id（不用座標四捨五入合併）：道路端點、兩條以上道路共用的 node、障礙物、缺資料處、封閉道路的中點。
+- way 在頂點切成邊；每條邊保留原始 way id、沿線每個 node id、座標與累積距離（大圓距離）。
+- 只有共用 node 才是路口：高架橋跨過平面道路（幾何交叉、沒共用 node）不相連。不同高度層（layer／橋／隧道）在兩條路的中間點共用 node 視為資料錯誤，拆成不同頂點、不相連，報告列出；道路端點接到別的高度層（橋的引道）是正常相接。
+- 不進路網：施工中、計畫中、廢棄、月台、area=yes 的廣場等（報告列出數量）。
+
+### 五種運具的通行規則（`server/osm/access.mjs`）
+- 標籤優先順序：汽車 motorcar > motor_vehicle > vehicle > access；機車／大型重機 motorcycle > …；自行車 bicycle > vehicle > access；步行 foot > access；同一個鍵先看 `:forward`／`:backward`。
+- 每條邊、每種運具、每個方向一個狀態：**允許（標籤）／推定允許（未標註，依道路類別）／未知（未標註、無可靠預設）／有條件（destination、private…）／禁止（標籤）／推定禁止（依法規或道路類別）／單行反向**，另有「依時段」旗標（`:conditional`）。未標註的不會直接當成允許或禁止：推定的與標籤的分開記錄，未知的交給路徑規劃政策（預設可走但成本 ×3 並警告；可改成禁止）。
+- 台灣規則（推定）：國道禁止機車（含大型重機）、自行車、行人；快速公路、市區快速道路（motorroad=yes、台61～88、名稱含「快速公路／快速道路／高架道路」）禁止普通機車、自行車、行人；人行道、步道禁止汽機車；自行車走人行道為「未知」；產業道路（track）汽機車為「未知」；名稱含「匝道」但沒標註的連絡道，機車、自行車、行人為「未知」（可能是快速道路出入口）。
+- 通用標籤（`access`、`vehicle`）不能放寬依法規或道路型態不能走的路：`highway=steps`＋`access=yes` 不代表汽車能開，國道標 `access=yes` 也不代表行人能走；只有該運具自己的標籤（`motorcar`、`motorcycle`、`motor_vehicle`、`bicycle`、`foot`）能放寬。通用標籤仍然可以更嚴格（`access=no`、`private`）。階梯汽機車一律不能走，`bicycle=yes` 只算「有條件」（牽車）。
+- 排氣量條件直接套用（不是時段，不標「依時段」）：`motorcycle:conditional=yes @ (displacement >= 250 cc)`（快速公路開放大型重機，全台約 570 條）、`no @ <=250 cc`（市民大道高架等禁行普通機車）。機車以 125 cc、大型重機以 550 cc 判斷。
+- 單行：oneway、圓環與國道隱含單行、`oneway:bicycle=no`、cycleway=opposite*；行人只受 `oneway:foot`（或步道本身的單向）。
+- 障礙物（barrier）：車阻擋汽車、重機，機車未知，自行車、行人可過；閘門汽機車未知；node 上的 access 標籤優先。
+- 號誌、停車再開、平交道、收費站記在頂點旗標（ETA 用）。
+
+### 轉向限制（`server/osm/restrictions.mjs`）
+- 解析 relation `type=restriction`：no_／only_ 的左轉、右轉、直行、迴轉、no_entry、no_exit；via 是 node 或 way（中央分隔島迴轉道）。
+- `type=restriction:<運具>`、`restriction:<運具>=…`、`except=bicycle;psv…`：只套用到對應運具；行人不受轉向限制。
+- `restriction:conditional`、`day_on/hour_on`：記錄為「依時段」，預設不套用，路線結果回報有幾條沒套用。
+- from／to 道路沒有在 via 點斷開（不合 OSM 規範但常見）：用轉彎角度判斷方向。對不上的（道路不在範圍內、via 不相接…）不套用，報告列出原因與 relation id。
+- 路徑搜尋（`server/osm/router.mjs`）以「有向邊」為狀態做 A*，才能正確處理轉向限制；迴轉只在死路允許。
+
+### 起終點吸附（v1.9.2）
+- 吸附到最近的**路段**（點到線段的投影），不是最近的路口；第一段、最後一段只算實際走到的部分（距離、時間、座標都從投影點開始、到投影點結束）。同一條邊上的起訖點會判斷方向（單行道往回走要繞一圈）。
+- 避開走不出去／走不進來的小區塊：最近的路段若和另一端不互通（地下停車場出口、只出不進的車道、沒接上路網的室內步道、車阻後面的巷子），改用附近（最近距離＋500 m 內）能互通的路段，結果的 `snap.fromNearestM`／`toNearestM` 註明原本最近的距離。互通的判斷：各運具的強連通分量、每個島嶼最大的分量當主幹（起點開得到主幹、主幹開得到終點），小區塊內實際找一次。
+- 不同島嶼（澎湖、金門…）沒有渡輪連接：回傳 `NO_ROUTE`；10 km 內沒有可用道路：`NO_NEARBY_ROAD`。
+
+### 量測（本機，Node 22，2 核心）
+- 讀取器與 libosmium 逐筆比對（Helsinki 真實資料：24,260 node、5,130 way、620 relation）：座標、標籤、node 序列、relation 成員完全相同。
+- 有無 osmium tags-filter 預先篩選，建出的圖逐欄相同。
+- 合成大路網（169 萬頂點、338 萬邊、675 萬幾何點、3,000 條轉向限制）：建圖 17.6 秒、記憶體峰值約 1.0～1.2 GB、圖檔 258 MB；載入 0.2 秒；汽車 5 km 路線 4 ms、20 km 約 90 ms、100 km 中位數 0.4 秒（最慢 2.1 秒）。
+- **真實台灣（Geofabrik taiwan-20261117.osm.pbf，313 MB，資料時間 2026-11-17 21:24 UTC）**：道路 way 823,658 條、道路 node 623 萬 → 1,407,311 頂點、1,824,955 邊、847 萬幾何點、道路 190,082 km；轉向限制 3,170 筆，套用 2,885 筆（via way 430；依時段 353 筆預設不套用）。建圖：沒有 osmium 44 秒、有 osmium 26 秒，記憶體峰值約 0.95 GB，圖檔 285 MB，兩種方式建出的圖逐欄相同。汽車最大連通區占 97.7%（其餘主要是澎湖、金門、馬祖、離島與停車場等小區塊）；有標速限的道路只占 5.7%（其餘依道路類別推估，結果中標示）。
+- 真實路線抽查（第一次查詢另需約 1～2 秒建索引）：台北車站→台北 101 汽車 7.0 km／15 分（走市民大道高架），機車 6.1 km／25 分（不上高架），大型重機與汽車同路；台中車站→高鐵台中站 8.8 km；花蓮→台東 171 km／3.5 小時；市區路線 10～100 ms；台北→高雄汽車 352 km／3 小時 34 分（國道），但要 2～3 秒（A* 幾乎搜遍全台，下一階段用 CH 加速）；馬公→台中、金城→台北：不同島嶼，`NO_ROUTE`。
+
+## v1.10.0：網頁、API、地圖與 GPS 導航改用全台 OSM 道路圖
+
+伺服器有 OSM 道路圖（`data/osm/graph/current.json`）時網頁自動改用它；本機的台中路網（`data/graph`）變成選用（台中公車營運規劃、站點建議、道路寬度圖層仍需要它）。介面上的「🗺 使用全台 OSM 道路圖」可以關掉改回本機路網（會記住）。大眾運輸（公車＋捷運）照舊。
+
+### 第一次使用（Windows PowerShell 一樣）
+```bash
+npm run osm:build        # 建圖＋地標表：約 1～2 分鐘，記憶體峰值約 1.1 GB；輸出 data/osm/graph/YYYYMMDD/
+npm start                # 或 npm run server：啟動時在背景載入 OSM 圖（約 3～5 秒），網頁會自動等它
+```
+- 機器較慢或記憶體較小：分兩步 `npm run osm:build -- --no-alt`，再 `npm run osm:alt`（只建地標表；時間模型參數改了也用它重建）。
+- 重建圖之後伺服器自動換新（監看 `data/`），或 `POST /api/v1/admin/reload`。
+- 修正：v1.9.2 的 `js/eta-engine.js` 用了 `export … from`，單檔打包（`node build.mjs`，`npm start` 會先執行）會失敗；已改掉，`npm test` 第一步改成打包檢查。
+
+### 網頁
+- **地圖**：伺服器依畫面範圍送圖磚（XYZ 編號，當 512 像素用），只放這個縮放看得到的道路等級；同一條 way 的相鄰邊、低縮放時同類道路首尾相接的都合併成一條線（全台畫面一張圖磚約 6～16 KB br）。z15 以上顯示路名（雙向分隔的同名道路只標一次）。圖磚網址帶圖檔版本：瀏覽器與 Service Worker 可以長期快取，離線時看過的地圖仍可顯示（最多 3,000 張）；其他 API 不再經過 Service Worker 快取。右下角有 OSM 版權標示。
+- **選點**：點地圖（點哪裡就用哪裡，規劃時伺服器吸附到最近的可用路段，並顯示最近道路與距離）、搜尋路名（全台；同名道路依離地圖中心的距離排序）、輸入「緯度,經度」（含澎湖、金門、馬祖、蘭嶼）、使用目前位置。
+- **規劃**：最快；直線距離 60 km 內另附「最短距離」（長距離的最短路線多半繞山路、小路，時間多很多，也要多算 1 秒以上）。避開國道、避開指定道路、K 條替代、Pareto、營運規劃目前只在本機路網提供（OSM 模式下隱藏）。
+- **結果標示**：速限來源（OSM 有標／只有區域代碼如 `TW:urban`／依道路類別推估）與覆蓋比例、OSM 未標註的通行權（依道路類別推定）、有限制（限住戶等）、時段／條件限制（未判斷時段）、渡輪（不含候船；OSM duration 或平均航速推估）、推估的碼頭連接、起終點離道路多遠；時間分成「行駛」與「路口與轉彎」。
+- **道路資訊**（點擊模式選「查看道路資訊」）：路名、編號、OSM 類別、速限與來源、五種運具的通行狀態。
+
+### GPS 導航
+- 導航步驟、每段行駛時間（`timing.segS`）、路口與轉彎延遲（`timing.delays`）由伺服器用同一套參數（`js/eta-params.js`）算好；網頁的 ETA 模型只補上真實長度（大圓距離）、不確定範圍（依道路類別的變異）、本機歷史速度（以 OSM way id 為鍵）、近程與本趟修正、停等扣除——和本機路網的 ETA 規則相同。**沒有用 GPS 速度直接除剩餘距離**；剩餘距離是沿路線的距離，不是直線。
+- 偏航確認（與原本相同的防抖：連續多筆精確定位、持續時間、有移動、冷卻）後，從目前定位＋行進方向向伺服器重新規劃（車頭反向要先迴轉的時間會算進去），只問一次；失敗時回到偏航狀態、冷卻後再試，網路斷線會明確提示。
+- 渡輪段：步驟顯示「⛴ 搭乘渡輪」，語音「搭乘渡輪」。
+
+### API（新增；原有 API 不變）
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET／POST | `/api/v1/osm/route` | `from`、`to`（「緯度,經度」或 `{lat,lon}`）、`mode`（car／heavy／moto／bike／walk）、`alternatives`（預設 1：最快＋60 km 內的最短；0：只要最快；all：一定附最短）、`heading`（偏航重新規劃用，度）、`steps`（0＝不回逐步）。回傳 `routes[]`：`distanceM`、`durationS`（＝`driveS`＋`delayS`）、`geometry`（[經度, 緯度]）、`roads`、`ways`（每條 way 的長度、速限與來源）、`steps`（type：start／straight／slight／turn／sharp／uturn／ferry／arrive；`index` 指向 geometry）、`timing`（`segS`、`segCls`、`segKnown`、`segWay`、`delays`）、`ferries`、`warnings`、`snap`；`notes` |
+| GET | `/api/v1/osm/nearest` | `lat`、`lon`、`mode`、`radius`：最近道路的路名、類別、速限與來源、各運具通行狀態 |
+| GET | `/api/v1/osm/search` | `q`、`near`（緯度,經度）、`limit`：全台路名搜尋 |
+| GET | `/api/v1/osm/tiles/{z}/{x}/{y}.json` | 地圖圖磚：`v:2`、`bbox`、`extent`（4096）、`hw`、`names`、`roads`（[類別序號, 路名序號, 單行, 差值座標]）；Cache-Control 1 天、ETag、br／gzip；限流是一般 API 的 20 倍 |
+| GET | `/api/v1/osm/info` | 頂點、邊、資料時間、版本、地標表 |
+- 沒有 OSM 圖或 `OSM=0` 時這些 API 回 503 `OSM_NOT_LOADED`（其他功能照常）；`/api/v1/health` 多一個 `osm` 欄位（載入中為 `loading: true`）。錯誤碼：`BAD_COORD`、`BAD_MODE`、`BAD_PARAM`、`NO_NEARBY_ROAD`（422）、`NO_ROUTE`（404）、`NO_ROAD_NEARBY`（404）。回應的 `meta.osmVersion` 是圖檔版本；路線快取的鍵包含它，重建圖後不會拿到舊結果。
+- 環境變數：`OSM`（預設 1）、`OSM_GRAPH_DIR`（預設 `data/osm/graph`）、`OSM_WARM`（預設 car：啟動時先建好汽車的索引與地標）。掛進 server_2 用 `BUS_PLANNER_OSM`、`BUS_PLANNER_OSM_GRAPH_DIR`、`BUS_PLANNER_OSM_WARM`；台中路網載入後在背景載入 OSM 圖。
+- 記憶體：每個背景計算執行緒各載入一份（全台圖約 300 MB＋用到的運具的地標表各約 34 MB）。`WORKERS=1` 時長距離路線（1～3 秒）計算期間，其他 OSM 請求（包括還沒快取的圖磚）會排隊；記憶體夠的話可以設 `WORKERS=2`。
+
+### 上一階段「尚未完成」的四項（本版一併完成）
+- **長距離加速（ALT 地標）**：每種運具 6 個地標（台灣外圍 16 個方向最外側、彼此 ≥10 km），下界＝時間×（只影響選路的係數）＋號誌等待＋上船成本，保證不高估——路線與不用地標時完全相同，只是快很多。全台：建表約 20 秒、`osm-alt.bin` 約 160 MB；台北→高雄汽車 0.13 秒（原本 2～3 秒）、機車 0.9 秒、新竹→台東約 2 秒、台中→馬公（含渡輪）約 2.5 秒。時間模型參數改了（`MODEL_KEY` 不同）或查詢政策比預設寬鬆時自動不用地標表。
+- **渡輪**：`route=ferry` 納入路網（時間用 OSM `duration`，沒有就以平均航速推估並標示；換算的航速不合理時視為標錯）；碼頭端點沒接上道路的補一段推估的「碼頭連接」（≤300 m）；起終點不會吸附到航線；上船有 30 分鐘的選路成本（不算進時間），有陸路時優先走陸路；只載人的航線汽車不能搭。
+- **轉彎與道路等級成本**：轉向延遲（左轉、右轉、微轉、急轉、迴轉；機車兩段式左轉）、號誌與路口等待（小路接大路、轉彎才算）與導航 ETA 用同一套參數；選路時巷弄、服務道路、產業道路等加權（只影響選哪條，不影響顯示的時間），不再為了少幾個號誌鑽小巷。
+- **區域速限代碼**：`TW:urban`、`TW:rural` 等以法定 50 km/h 與道路類別預設取較小值，結果標示「只有區域代碼」（例如台北車站→台北 101 的最快路線約 15% 的長度是這種）。
+
+### 測試
+- `node test/server-osm.mjs`（已加入 `npm test`）：OSM API（主執行緒與背景執行緒）、503、快取與版本、重建後自動換新、圖磚格式與合併、`osm:alt`。
+- `NODE_PATH=$(npm root -g) node test/browser-osm.cjs`（需要 Playwright）：沒有本機路網時自動使用 OSM、底圖、規劃、步驟與分析、路名搜尋、道路資訊、渡輪、GPS 導航與偏航重新規劃、關閉 OSM。
+- 用真實全台圖截圖：`OSM_GRAPH_DIR=data/osm/graph SHOT_DIR=. node test/browser-osm.cjs real`。
+
+### 仍未完成
+- OSM 模式還不能避開國道／指定道路，也沒有 K 條替代路線、Pareto。
+- 沒有即時路況（不假造）；收費、紅綠燈時相都沒有資料。
+- 渡輪沒有班表：時間只含航行，不含候船。
+- 高架與平面道路只靠 OSM 的連接關係區分；GPS 在高架下方時，偏航判斷仍可能誤判（與本機路網相同）。
+
+## v1.11.0：OSM 路網稽核、全台多運具大眾運輸（台鐵／高鐵／捷運／輕軌／公車）、可放大到 z21 的 2D／3D 地圖、HMM 導航、道路事件
+
+完整稽核與測試結果見 [`docs/reports/TAIWAN_MAP_NAVIGATION_V2_AUDIT.md`](docs/reports/TAIWAN_MAP_NAVIGATION_V2_AUDIT.md)；全台 OSM 稽核數字見 `docs/reports/osm-audit-20261117.md`。使用者提供的 OAS 文件放在 `docs/oas/`（軌道 v2、GIS 圖資 v3、道路事件 v1、公車、路況、自行車）。
+
+### 新的指令
+```bash
+npm run osm:audit        # RoadGraphValidator：拓樸、幾何、立體交叉 vs 疑似漏接路口、各運具有向／無向連通、跨縣市實際路由（全台約 1 分鐘）
+npm run osm:buildings    # 從 OSM PBF 擷取建築外框與高度 → data/osm/graph/<日期>/osm-buildings.twbld（約 40 秒）
+node tools/transit-sync.mjs --city Taipei --operators TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT --rail TRA,THSR --extras   # 需要 TDX 金鑰
+npm run traffic:sync     # TDX 道路事件 → .cache/traffic/events.json（需要 TDX 金鑰；建議排程每 1～5 分鐘）
+npm run test:v111        # 這一版新增的測試（也已加入 npm test）
+```
+
+### 地圖（網頁）
+- **縮放上限的真正原因**：舊版的上限寫死成「相對起始畫面的倍率」（滾輪 ×20、雙指 ×60），起始畫面是全台灣時只到約 z12（約 25 m／像素），看不到街道；底圖圖磚也只抓到 z16。
+- 現在以「每像素公尺數」換算成一般網頁地圖的縮放層級：**z5～z21**（z19 約 0.27 m／像素、z21 約 0.07 m／像素）。伺服器圖磚最高抓 z18（512 像素，＝z19），再放大是向量 overzoom（圖磚座標量化約 3.4 cm），不會模糊；畫面會提示已超過原生層級。
+- 滾輪平滑縮放（以游標為中心）、雙擊放大（Shift＋雙擊縮小）、拖曳放開有慣性、雙指縮放＋旋轉（超過 8° 才轉）、右鍵（或 Ctrl）拖曳＝旋轉／俯仰、＋／－ 鍵；右上角控制列：縮放、目前層級、指北針（回北朝上）、左右旋轉、2D／3D、顯示全圖；左下比例尺。
+- z17 以上道路依實際寬度畫（OSM `width`／`lanes`，沒有就依類別典型寬度）、z17.5 以上畫單行道箭頭、z18 以上路名較大較密。
+- **3D**：地圖平面用 CSS 透視傾斜（GPU 合成），滑鼠／手指座標經反投影換回地面座標，傾斜時點選、拖曳、縮放都正確（瀏覽器實測誤差 0.0008 m，不反投影時 234 m）。
+- **建築**：z16 以上畫建築外框，3D 時畫 2.5D 立體，z18 以上標名稱。台灣 OSM 60.4 萬棟中，只有 1.8% 有 `height`、11.1% 有 `building:levels`，**其餘 87.1% 的高度是推估**，畫成半透明虛線，不當真實資料。
+
+### 路網
+- 時段條件的轉向限制（`restriction:conditional`、`day_on/hour_on`）依出發時間判斷：全台 352 筆中 344 筆可判斷；無法判斷的（只在國定假日、依重量）不套用並在結果中回報。API：`/api/v1/osm/route?depart=…`（沒給＝現在；`conditional=0` 回到舊行為）。
+- 通行權對外四態：`allowed／restricted／prohibited／unknown`＋來源（`tag`、`default` 依道路類別與法規推定、`oneway`）；`/api/v1/osm/nearest` 的 `accessProfile` 兩個方向分開。未標註且沒有可靠預設的是 `unknown`，不當成可通行。
+- 高度層加上 `location=underground／overground`；`covered` 不改變高度。
+- 道路事件（TDX 道路事件 v1）：完全阻斷的路段封閉、部分阻斷／施工／壅塞加權；只阻斷單向時依方向；沒有座標的事件只列出、不猜位置。路線結果有 `traffic`（使用的事件與原因）與每條路線經過的事件；`GET /api/v1/traffic/events` 列出事件與對應結果；`events=0` 關閉。
+
+### 大眾運輸（全台 OSM 模式）
+- 交通方式選「大眾運輸」時改用伺服器的 `GET /api/v1/transit/plan`（`from`、`to`、`depart`、`modes=bus,metro,lrt,tra,thsr`、`maxWalk`、`maxTransfers`）：RAPTOR，有時刻表的依班次（時間相依），捷運／輕軌有站別時刻表用實際發車時刻、只有班距的用班距推估並標示；起終點與轉乘的步行在 OSM 步行路網上實際走（不是直線）；TDX 的站內轉乘時間與共站優先；**不依站名合併車站**。
+- 輸出最快、最少轉乘、最少步行、最便宜（每段都有票價時）、建議；每段有運具、上下車站、方向、車次、發車／抵達、等候、轉乘、步行距離、票價（台鐵票種依原始資料，不猜哪一種是全票）、軌道線型（GIS 圖資 v3 的 WKT）。台鐵即時誤點（LiveTrainDelay）會計入。
+- 網頁：方案清單、每段明細、地圖依運具上色（步行虛線）。
+- **限制**：這個開發環境沒有 TDX 金鑰（訪客模式不能用 GIS 圖資、每日 20 次），所以軌道整合只用依 OAS 欄位做的**模擬資料**測過（`test/transit-rail.mjs`、`node test/make-transit-cache.mjs` 可產生模擬快取給伺服器用）；真實資料要在有金鑰的環境執行 `transit-sync` 後驗證。
+
+### 導航
+- 路線上的位置改用 HMM（`js/hmm-match.js`）：路線靠近自己（分隔道路去回、繞圈）時，低速沒有 GPS 方向的情況下，舊方法有 8～9% 的定位對到另一側，HMM 是 0%；導航引擎中低速情境的進度最大誤差 45 → 22 m（模擬資料，`test/nav-hmm.mjs`）。HMM 找不到候選時退回舊方法，偏航判斷不變。
+
+### 新增與修改的檔案
+- 新增：`server/osm/audit.mjs`、`server/osm/conditional.mjs`、`server/osm/buildings.mjs`、`server/traffic/events.mjs`、`server/transit/rail-provider.mjs`、`server/transit/transfer-engine.mjs`、`server/transit/raptor.mjs`、`server/transit-engine.mjs`、`js/map-view.js`、`js/osm-buildings.js`、`js/transit-plan.js`、`js/hmm-match.js`、`tools/osm/osm-audit.mjs`、`tools/osm/osm-buildings.mjs`、`tools/traffic-sync.mjs`、`docs/oas/*`、`docs/reports/*`
+- 測試：`test/osm-v111.mjs`、`test/transit-rail.mjs`、`test/nav-hmm.mjs`、`test/map-view.mjs`、`test/fixtures/rail-fixture.mjs`、`test/make-transit-cache.mjs`
+- 修改：`server/osm/router.mjs`（依時間的轉向限制、道路事件 overlay、步行可達範圍）、`server/osm/restrictions.mjs`、`server/osm/access.mjs`、`server/osm/tags.mjs`、`server/osm-engine.mjs`、`server/server.mjs`、`server/backend.mjs`、`server/route-worker.mjs`、`server/config.mjs`、`server/transit/snapshot.mjs`、`server/transit/timetable-store.mjs`、`tools/osm/osm-build.mjs`、`tools/transit-sync.mjs`、`js/osm.js`、`js/ui-events.js`、`js/ui-touch.js`、`js/nav-ui.js`、`js/navigation.js`、`js/render-core.js`、`js/main.js`、`index.html`、`css/app.css`、`package.json`、`.env.example`

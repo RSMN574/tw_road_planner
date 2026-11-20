@@ -1,0 +1,8 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "taiwantong", "runtimeExecutable": "node", "runtimeArgs": ["server/server.mjs"], "port": 8080 },
+    { "name": "taiwantong-transit-fixture", "runtimeExecutable": "node", "runtimeArgs": ["server/server.mjs"], "port": 8090,
+      "env": { "PORT": "8090", "CACHE_DIR": ".cache/transit-fixture", "TRANSIT_CITY": "Taichung", "TRANSIT_METRO": "KRTC,KLRT,NTALRT", "TRANSIT_RAIL": "TRA,THSR" } }
+  ]
+}

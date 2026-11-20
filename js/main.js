@@ -21,9 +21,13 @@ import { init as init_ui_touch } from './ui-touch.js';
 import { init as init_pwa } from './pwa.js';
 import { init as init_server_link } from './server-link.js';
 import { tryFetchAll } from './loader.js';
+import { init as init_osm } from './osm.js';
+import { init as init_map_view, syncMapUi } from './map-view.js';
+import { init as init_transit_plan } from './transit-plan.js';
+import { syncControls } from './ui-events.js';
 
 // 低層模組需要呼叫高層函式時，透過 Hooks.xxx（避免循環 import）
-Object.assign(Hooks, { drawNav, drawBus, drawInspect, drawRoute, drawUbike, drawWidthLayer, renderAnalysis, renderRouteList, rescore, routeMetrics, scheduleRender, stepColor, updateBusSuggestion });
+Object.assign(Hooks, { syncMapUi, syncControls, drawNav, drawBus, drawInspect, drawRoute, drawUbike, drawWidthLayer, renderAnalysis, renderRouteList, rescore, routeMetrics, scheduleRender, stepColor, updateBusSuggestion });
 
 init_loader();
 init_router();
@@ -38,6 +42,9 @@ init_ubike();
 init_analysis();
 init_road_attrs();
 init_tdx();
+init_osm();
+init_map_view();
+init_transit_plan();
 
 drawGrid();
 tryFetchAll();

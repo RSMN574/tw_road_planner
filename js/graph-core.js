@@ -78,8 +78,8 @@ export function parseCoordInput(v) {
   if (!m) return null;
   const a = parseFloat(m[1]), b = parseFloat(m[2]);
   // 经纬度（台湾）
-  if (a >= 22 && a <= 25.5 && b >= 119.5 && b <= 122.5) return { lat: a, lon: b, ll: true };      // ll：WGS84 經緯度（要依路網座標型別轉換）
-  if (b >= 22 && b <= 25.5 && a >= 119.5 && a <= 122.5) return { lat: b, lon: a, ll: true };
+  if (a >= 20.5 && a <= 26.5 && b >= 116 && b <= 122.5) return { lat: a, lon: b, ll: true };      // ll：WGS84 經緯度（台灣本島、澎湖、金門、馬祖、蘭嶼；要依路網座標型別轉換）
+  if (b >= 20.5 && b <= 26.5 && a >= 116 && a <= 122.5) return { lat: b, lon: a, ll: true };
   // 投影坐标（数值远大于经纬度）
   if (Math.abs(a) > 1e5 || Math.abs(b) > 1e5) return { lon: a, lat: b };
   return null;

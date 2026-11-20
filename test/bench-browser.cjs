@@ -19,6 +19,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   // ① 載入（冷：沒有 HTTP／SW 快取；熱：同一個瀏覽器再開一次）
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, permissions: ['geolocation'], geolocation: { latitude: A[0], longitude: A[1], accuracy: 8 } });
   await ctx.addInitScript(() => { window.SpeechSynthesisUtterance = function (t) { this.text = t; }; Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: { getVoices: () => [{ name: 'x', lang: 'zh-TW' }], addEventListener() {}, resume() {}, cancel() {}, speak(u) { setTimeout(() => u.onend && u.onend(), 5); } } }); });
+  if (process.env.NAVCAM) await ctx.addInitScript(m => { try { if (m.includes('north')) localStorage.setItem('nav.orient', '"north"'); if (m.includes('flat')) localStorage.setItem('nav.tilt', 'false'); } catch {} }, process.env.NAVCAM);   // 比較用：NAVCAM=north,flat
   const page = await ctx.newPage(); let bytes = 0;
   if (+process.env.CPU > 1) { const c0 = await ctx.newCDPSession(page); await c0.send('Emulation.setCPUThrottlingRate', { rate: +process.env.CPU }); res.cpuThrottle = +process.env.CPU; }   // 模擬手機 CPU（例如 CPU=4：慢 4 倍） page.on('response', async r => { if (/\/data\//.test(r.url())) { try { const h = await r.headerValue('content-length'); bytes += +h || 0; } catch {} } });
   const errs = []; page.on('pageerror', e => errs.push(e.message));
@@ -47,6 +48,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const fr = await page.evaluate(() => { window.__stopFrames = true; const d = window.__frames.slice(2).sort((a, b) => a - b); return { n: d.length, p95: d[Math.floor(d.length * 0.95)], p99: d[Math.floor(d.length * 0.99)], max: d[d.length - 1], over50: d.filter(x => x > 50).length }; });
   res.framesPerFix = +(fr.n / K).toFixed(1); res.frameP99Ms = +fr.p99.toFixed(1); res.frameMaxMs = +fr.max.toFixed(1); res.framesOver50ms = fr.over50;
   res.svgNodes = await page.evaluate(() => document.querySelectorAll('svg *').length);
+  { await cdp.send('HeapProfiler.collectGarbage').catch(() => {}); const m = (await cdp.send('Performance.getMetrics')).metrics, g = k => (m.find(x => x.name === k) || {}).value; res.jsHeapUsedMB = +(g('JSHeapUsedSize') / 1048576).toFixed(1); res.domNodes = g('Nodes'); }
   const [x0, y0, h] = at(200 + (K - 1) * SP), nx = Math.cos(h), ny = -Math.sin(h), r0 = await metric(), tr = Date.now(); let n = 0;
   res.trace = []; for (; n < 25 && !(await page.evaluate(() => window.__nav.reroutes() > 0)); n++) { await send(x0 + nx * SP * (n + 1), y0 + ny * SP * (n + 1)); res.trace.push(await page.evaluate(() => window.__nav.status() + ":" + (window.__nav.dbg ? window.__nav.dbg() : ""))); }
   res.rerouted = await page.evaluate(() => window.__nav.reroutes() > 0); res.offrouteFixesUntilReroute = n; res.offrouteM = n * SP;

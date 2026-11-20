@@ -9,10 +9,14 @@ import { ensureRA } from './road-attrs.js';
 import { ubNear } from './ubike.js';
 import { busNearIdx, routeKindOf } from './bus-core.js';
 import { countTurns, generateManeuvers, stopsOf } from './analysis.js';
-import { suggestBusMulti } from './bus-plan.js';
+import { legsOf, suggestBusMulti } from './bus-plan.js';
 import { TDX, annotateJourney } from './tdx.js';
 import { journeyToSug, ttSearch } from './timetable.js';
-import { fitBase, render, resetView, scheduleRender, screenToWorld } from './render-core.js';
+import { clientToWorld, fitBase, render, resetView, scheduleRender } from './render-core.js';
+import { osmAnalysisRows, osmInspect, osmOn } from './osm.js';
+
+// 起終點的世界座標：本機路網的節點用節點座標；OSM 選的點（idx = -1）用點本身的座標
+const ptXY = p => (p.idx >= 0 ? [State.nodeXY[p.idx*5+2], State.nodeXY[p.idx*5+3]] : [p.lon, p.lat]);
 
 export function renderRouteList() {
   document.getElementById('routes').innerHTML = State.routeSet.map(it => it.route
@@ -33,12 +37,13 @@ export function setActive(key) {
 }
 
 export function stepColor(s) {
-  return s.turnType === 'uturn' ? '#7c3aed' : s.dir === 'left' ? '#2563eb' : s.dir === 'right' ? '#dc2626' : '#64748b';
+  return s.turnType === 'ferry' ? '#0891b2' : s.turnType === 'uturn' ? '#7c3aed' : s.dir === 'left' ? '#2563eb' : s.dir === 'right' ? '#dc2626' : '#64748b';
 }
 
 export function stepText(s) {
   if (s.turnType === 'start')  return `起點：從 ${esc(s.roadName || '起點')} 出發`;
   if (s.turnType === 'arrive') return `${fmtDist(s.distanceFromPrev)} 抵達：${esc(s.roadName || '終點')}`;
+  if (s.turnType === 'ferry') return `${fmtDist(s.distanceFromPrev)} ⛴ 搭乘渡輪 ${esc(s.roadName || '')}${s.spd ? ` <small style="color:#64748b">（${esc(s.spd)}）</small>` : ''}`;
   const d = s.dir === 'left' ? '左' : '右';
   const act = { straight: '直行', slight: `微${d}轉`, turn: `${d}轉`, sharp: `急${d}轉`, uturn: '迴轉' }[s.turnType];
   return `${fmtDist(s.distanceFromPrev)} ${act} ${esc(s.roadName)}${s.spd ? ` <small style="color:#64748b">（${esc(s.spd)}）</small>` : ''}`;
@@ -69,7 +74,8 @@ export const GOAL_TAG = { fastest: '最快抵達', fewer: '最少轉乘', lesswa
 export function updateBusSuggestion() {
   State.busOpts = []; State.busSel = 0; State.busSug = null; State.busRec = -1;
   if (State.bus && State.bus.x && State.fromPoint && State.toPoint) {
-    State.busOpts = suggestBusMulti(State.nodeXY[State.fromPoint.idx*5+2], State.nodeXY[State.fromPoint.idx*5+3], State.nodeXY[State.toPoint.idx*5+2], State.nodeXY[State.toPoint.idx*5+3]);
+    const [fx, fy] = ptXY(State.fromPoint), [tx, ty] = ptXY(State.toPoint);
+    State.busOpts = suggestBusMulti(fx, fy, tx, ty);
     if (getMode() === 'transit') {
       const goal = document.getElementById('goal').value; State.paretoOnly = goal === 'pareto';
       State.busRec = pickRecommended(State.busOpts, goal); if (State.busRec >= 0) State.busSel = State.busRec;
@@ -90,9 +96,14 @@ export function fitToTransit() {
 export function renderBusBox() {
   const box = document.getElementById('busBox');
   if (!State.busSug) { box.innerHTML = ''; return; }
-  if (State.busSug.error) { box.innerHTML = `<div class="rt na">🚌 公車建議：${esc(State.busSug.error)}</div>`; return; }
-  const car = State.routeSet.find(x => x.key === 'fastest' && x.route), flowOf = o => [o.walkIn >= 1 ? `步行 ${fmtDist(o.walkIn)}` : '', ...o.rides.map(r => `${routeKindOf(r) === 'metro' ? '🚇 ' : ''}${esc(r.label)}（${r.stops.length - 1} 站）`), o.walkOut >= 1 ? `步行 ${fmtDist(o.walkOut)}` : ''].filter(Boolean).join(' → ');
+  const ybChk = State.UB && State.UB.x ? `<label style="font-size:12px;display:block;margin:2px 0"><input type="checkbox" id="ubikeLink" ${State.ubikeLink !== false ? 'checked' : ''} style="width:auto"> 🚲 YouBike 接駁（起點騎到較遠的站、下車後騎到終點；時間推估，未含即時可借車輛）</label>` : '';
+  if (State.busSug.error) { box.innerHTML = `<div class="rt na">🚌 公車建議：${esc(State.busSug.error)}</div>` + ybChk; return; }
+  const car = State.routeSet.find(x => x.key === 'fastest' && x.route), flowOf = o => legsOf(o).map(l =>            // 步行、公車、捷運、轉乘步行都列出
+    l.type === 'WALK' ? (l.m >= 1 ? `步行 ${fmtDist(l.m)}` : '') : l.type === 'TRANSFER' ? (l.sameStop ? '' : `<span title="${esc(l.src)}">轉乘步行 ${fmtDist(l.m)}</span>`) :
+    l.type === 'BIKE' ? `<span title="${esc(l.src)}" style="color:#c2410c">🚲 YouBike ${fmtDist(l.m)}（${esc(l.from.name)} → ${esc(l.to.name)}，約 ${Math.round(l.sec / 60)} 分）</span>` :
+    `${l.type === 'METRO_RIDE' ? '🚇 ' : ''}${esc(l.route)}（${l.stops} 站${l.fare ? `・<span title="TDX 票價（全票）：單程票 ${l.fare.single ?? '—'} 元、電子票證 ${l.fare.card ?? '—'} 元">${l.fare.card ?? l.fare.single} 元</span>` : ''}）`).filter(Boolean).join(' → ');
   let h = `<div style="font-size:13px;font-weight:600;margin:12px 0 2px;color:#334155"><input type="checkbox" id="busChk" ${State.busVisible ? 'checked' : ''} style="width:auto"> 🚌 公車方案（共 ${State.busOpts.length} 種，其中 ${State.busOpts.filter(o => o.pareto).length} 種為 Pareto 最優）</div>` +
+    ybChk +
     `<label style="font-size:12px;display:block;margin:2px 0"><input type="checkbox" id="parOnly" ${State.paretoOnly ? 'checked' : ''} style="width:auto"> 只顯示 Pareto 最優（時間、步行、轉乘、候車四項都沒有被其他方案全面超越）</label>` +
     (car ? `<div style="font-size:11px;color:#64748b">開車最快約 ${Math.round(car.min)} 分（估）</div>` : '');
   State.busOpts.forEach((o, i) => {
@@ -106,7 +117,7 @@ export function renderBusBox() {
 }
 
 export function metricsHtml(it) {
-  const m = it.met; if (!m) return '';
+  const m = it.met; if (!m && !it.plain) return '';
   if (it.plain) {                                              // 一般導航：不顯示 YouBike／適宜性／站牌，只留轉彎、收費與備註
     let h = `<br><small>轉彎 ${it.turns ?? 0} 次` + (it.toll > 0 ? ` · 含國道 ${(it.toll / 1000).toFixed(1)} km（收費路段，費用未計算）` : '') + `</small>`;
     if (it.note) h += `<br><small style="color:#b45309">${esc(it.note)}</small>`;
@@ -141,7 +152,8 @@ export function renderStops() {
 }
 
 export function inspectAt(sx, sy) {
-  const [x, y] = screenToWorld(sx, sy), k = findNearestNode(x, y), box = document.getElementById('roadInfo');
+  if (osmOn()) { State.inspectEdge = null; const [wx, wy] = clientToWorld(sx, sy); osmInspect(wx, wy, document.getElementById('roadInfo')); return; }   // 全台 OSM：問伺服器
+  const [x, y] = clientToWorld(sx, sy), k = findNearestNode(x, y), box = document.getElementById('roadInfo');
   if (k < 0) { State.inspectEdge = null; box.innerHTML = '<div class="rt na">附近找不到道路</div>'; scheduleRender(); return; }
   const sn = snapEdge(x, y, k), ra = ensureRA(), e = sn.edge, at = e >= 0 && State.adjEid[e] != null ? State.edgeAttr.get(State.adjEid[e]) : undefined;
   State.inspectEdge = sn;
@@ -165,6 +177,7 @@ export function renderAnalysis() {
   const box = document.getElementById('analysisBox'), it = State.routeSet.find(x => x.key === State.activeKey && x.route);
   if (!it || !State.currentRoute) { box.innerHTML = ''; return; }
   const m = it.met, s = it.score, r = v => v == null ? '—' : Math.round(v);
+  if (it.route._osm) { box.innerHTML = `<div style="font-size:13px;font-weight:600;margin:14px 0 4px;color:#334155">路線分析</div><table style="font-size:12px;width:100%;border-collapse:collapse">` + osmAnalysisRows(it).map(([a, b]) => `<tr><td style="color:#64748b;padding:2px 6px 2px 0;white-space:nowrap;vertical-align:top">${esc(a)}</td><td>${esc(b)}</td></tr>`).join('') + '</table>'; return; }
   const rows = it.plain ? [['路線', it.label], ['演算法', it.algo || ALGO[State.routerMode]], ['總距離', fmtDist(it.route.distance)], ...speedRows(it), ['轉彎數', it.turns ?? countTurns(it.route)], ['收費路段（國道）', it.toll > 0 ? `${(it.toll / 1000).toFixed(1)} km（費率未納入）` : '無']] : [['路線', it.label], ['演算法', it.algo || ALGO[State.routerMode]], ['總距離', fmtDist(it.route.distance)], ...speedRows(it), ['轉彎數', it.turns ?? countTurns(it.route)],
     ['YouBike 覆蓋', m.ub ? `${m.ub.count} 站（${m.ub.R} m 內，容量 ${m.ub.cap}）` : '未載入'], ['既有公車站牌', m.bus ? m.bus.count + ' 站（150 m 內）' : '未載入'],
     ['道路適宜性', Math.round(m.suit) + '／100'], ['未知屬性比例', Math.round(m.unkRatio * 100) + '%'], ['路線總評分', s ? `${r(s.total)}／100${s.best ? ' ⭐ 推薦' : ''}` : '（一般模式不評分）']];
@@ -213,15 +226,18 @@ export async function runTT(force) {
   box.innerHTML = '<div class="rt na">正在取得時刻表並搜尋…</div>';
   try {
     const algo = document.getElementById('ttAlgo').value, res = await ttSearch(algo, force);
-    const f = State.nodeXY, fx = f[State.fromPoint.idx*5+2], fy = f[State.fromPoint.idx*5+3], tx = f[State.toPoint.idx*5+2], ty = f[State.toPoint.idx*5+3];
-    let h = `<div class="rt" style="cursor:default"><b>⏱ ${algo === 'csa' ? 'CSA' : 'RAPTOR'}</b>（預定時刻表；納入 ${res.net.labels.length} 條路線${State.bus.routeKind.includes('metro') ? '（捷運沒有時刻資料，未納入）' : ''}、${res.net.pats.length} 個行駛方向，${Math.round(res.ms)} ms）`;
+    const [fx, fy] = ptXY(State.fromPoint), [tx, ty] = ptXY(State.toPoint);
+    const mt = res.net.metro || { n: 0 };
+    let h = `<div class="rt" style="cursor:default"><b>⏱ ${algo === 'csa' ? 'CSA' : 'RAPTOR'}</b>（公車：預定時刻表；納入 ${res.net.labels.length} 條路線、${res.net.pats.length} 個行駛方向，${Math.round(res.ms)} ms）` +
+      (mt.n ? `<br><small>🚇 捷運 ${mt.n} 個方向以班距納入（班距：${esc(mt.freqSrc)}；首末班：${mt.hoursKnown ? 'TDX' : '沒有資料，未判斷是否已收班'}）</small>` : '');
     if (res.net.errors.length) h += `<br><small style="color:#b45309">⚠ 部分路線時刻表取得失敗：${esc([...new Set(res.net.errors)].join('、'))}</small>`;
     if (!res.js.length) h += `<br><small>${res.net.errors.length && !res.net.pats.length ? '無法取得時刻表，所以沒辦法搜尋（見上方錯誤）' : res.nOrig && res.nTarg ? '在這些路線的時刻表中找不到可搭乘的方案（可能已過末班或今日未營運）' : '起點或終點附近沒有可對應到時刻表的站牌'}</small></div>`;
     else {
       for (const j of res.js) {
         const rides = j.legs.filter(l => l.type === 'ride');
         h += `<div style="margin-top:6px;border-top:1px dashed #e2e8f0;padding-top:4px"><b>轉乘 ${rides.length - 1} 次</b> · 抵達 ${fmtClock(j.arriveMs)}（共 ${Math.round((j.arriveMs - res.dep) / 60000)} 分）<small>` +
-          rides.map(l => `<br>${esc(l.label)} ${esc(State.bus.names[l.board])} ${fmtClock(l.dep)} → ${esc(State.bus.names[l.alight])} ${fmtClock(l.arr)} <span style="font-size:10px;padding:0 4px;border-radius:3px;background:#2563eb;color:#fff">預定時刻</span>`).join('') + '</small></div>';
+          rides.map(l => `<br>${l.metro ? '🚇 ' : '🚌 '}${esc(l.label)} ${esc(State.bus.names[l.board])} ${fmtClock(l.dep)} → ${esc(State.bus.names[l.alight])} ${fmtClock(l.arr)}${l.stops ? `（${l.stops} 站）` : ''} ` +
+            (l.est ? `<span style="font-size:10px;padding:0 4px;border-radius:3px;background:#f59e0b;color:#fff" title="${esc(l.src || '')}">班距推估</span>` : `<span style="font-size:10px;padding:0 4px;border-radius:3px;background:#2563eb;color:#fff">預定時刻</span>`)).join('') + '</small></div>';
       }
       if (res.later.length) h += `<div style="margin-top:6px;border-top:1px dashed #e2e8f0;padding-top:4px"><b>較晚出發的選項</b><small>` + res.later.map(j => { const rd = j.legs.filter(l => l.type === 'ride'); return `<br>${fmtClock(rd[0].dep)} 上車 · 轉乘 ${rd.length - 1} 次 · 抵達 ${fmtClock(j.arriveMs)}：${rd.map(l => esc(l.label)).join(' → ')}`; }).join('') + '</small></div>';
       h += '</div>';

@@ -4,7 +4,12 @@
 //   node tools/transit-sync.mjs                  只抓到期的資料
 //   node tools/transit-sync.mjs --force          全部重抓
 //   node tools/transit-sync.mjs --offline        不連網，只用磁碟上已有的資料重建並印報告
+//   node tools/transit-sync.mjs --metro-json     同步完順便產生 data/metro.json（捷運真實站序、站間時間、班距、票價；舊檔備份成 .bak）
+//   node tools/transit-sync.mjs --ubike-json     順便下載 YouBike 站點（TDX Bike/Station）到 data/ubike.json（大眾運輸的 YouBike 接駁要用；只有站點，沒有即時車輛）
 //   選項：--city Taichung  --operators TMRT
+//   v1.11：--rail TRA,THSR（台鐵、高鐵：車站、定期／當日時刻表、票價、即時誤點）  --extras（捷運站別時刻表、跨系統轉乘、共站、GIS 軌道線型）
+//         全台建議：--city Taipei --operators TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT --rail TRA,THSR --extras（伺服器的 /api/v1/transit/plan 讀同一個快取）
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { resolveToken } from './_tdx.mjs';
 import { createTdxFetcher, createTransitData } from '../server/transit/snapshot.mjs';
@@ -12,8 +17,8 @@ import { dateStrOf } from '../server/transit/time.mjs';
 
 const has = k => process.argv.includes('--' + k), arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 const tk = resolveToken(), dir = path.join(tk.cfg.cacheDir, 'transit');
-const td = createTransitData({ dir, city: arg('city', 'Taichung'), operators: arg('operators', 'TMRT').split(',').filter(Boolean),
-  fetchJson: tk.getToken ? createTdxFetcher({ upstream: tk.cfg.tdx.upstream, getToken: tk.getToken }) : null, log: console.log });
+const fetchJson = tk.getToken ? createTdxFetcher({ upstream: tk.cfg.tdx.upstream, getToken: tk.getToken, log: console.log }) : null;
+const td = createTransitData({ dir, city: arg('city', 'Taichung'), operators: arg('operators', 'TMRT').split(',').filter(Boolean), rail: arg('rail', '').split(',').filter(Boolean), extras: has('extras'), fetchJson, log: console.log });
 td.load();
 if (!has('offline')) {
   if (!tk.getToken) { console.error('找不到 TDX token：請設定 TOKEN_FILE，或在 .env 設 TDX_TOKEN_URL＋TDX_API_KEY（或加 --offline 只用現有快取）'); process.exit(2); }
@@ -28,5 +33,20 @@ console.log(`站點 ${s.stats.stops}（公車 ${s.stats.busStops}、捷運 ${s.s
 console.log(`班次 ${s.stats.trips}（其中 ${s.stats.estimatedTrips} 班的中途站時刻是用站間行駛時間推算）；完全沒有班次／班距資料的型態 ${s.stats.noServiceInfo}`);
 const today = dateStrOf(Date.now()), v = td.store.day(today), by = {}; for (const i of v.info) by[i] = (by[i] || 0) + 1;
 console.log(`今天（${today}）：${v.trips} 班；各型態資料來源 ${JSON.stringify(by)}（daily＝當日班表、schedule＝固定班表、frequency＝只有班距、none＝資訊不足、not-today＝班表註明今天不開）`);
+for (const [op, r] of Object.entries(s.detail.rail || {})) console.log(`軌道 ${op}：${r.stops} 站、${r.patterns} 種停靠型態、${r.trips} 班（當日停駛 ${r.suspended}、部分停駛 ${r.partial}）${r.missing.length ? '；缺 ' + r.missing.join('、') : ''}`);
+if (s.detail.crossTransfers) console.log(`跨系統轉乘（StationTransfer／TransferStations）：${s.detail.crossTransfers} 筆`);
 for (const [op, m] of Object.entries(s.detail.metro || {})) console.log(`捷運 ${op}：${m.patterns} 個方向型態、${m.withFreq} 個有班距、站間時間推估的型態 ${m.runEstimatedPatterns}${m.missing.length ? '；缺 ' + m.missing.join('、') : ''}`);
 if (s.warnings.length) { console.log(`\n資料警告（${s.warnings.length}）：`); for (const w of s.warnings.slice(0, 40)) console.log('  - ' + w); }
+if (has('metro-json')) {                                                                       // 交給 tools/metro-json.mjs（同一套檢查與備份）
+  const { spawnSync } = await import('node:child_process'), r = spawnSync(process.execPath, [fileURLToPath(new URL('./metro-json.mjs', import.meta.url)), '--operators', arg('operators', 'TMRT')], { stdio: 'inherit' });
+  if (r.status) process.exitCode = r.status;
+} else if (s.detail.metro && Object.keys(s.detail.metro).length) console.log('\n提示：加 --metro-json 可用這些資料產生 data/metro.json（或執行 node tools/metro-json.mjs）');
+if (has('ubike-json')) {
+  if (!fetchJson) { console.error('找不到 TDX token，無法下載 YouBike 站點'); process.exitCode = 2; }
+  else {
+    const { writeFileSync, renameSync, copyFileSync, existsSync } = await import('node:fs'), out = tk.cfg.files.youbike, r = await fetchJson(`/Bike/Station/City/${arg('city', 'Taichung')}?%24format=JSON`);
+    const rows = r.status === 200 && Array.isArray(r.data) ? r.data.filter(x => x && x.StationUID && x.StationPosition && Number.isFinite(+x.StationPosition.PositionLat) && Number.isFinite(+x.StationPosition.PositionLon)) : [];
+    if (!rows.length) { console.log(`✗ YouBike 站點下載失敗：HTTP ${r.status}${r.detail ? '：' + String(r.detail).slice(0, 120) : ''}（保留原本的 ${out}）`); process.exitCode = 1; }
+    else { if (existsSync(out)) copyFileSync(out, out + '.bak'); writeFileSync(out + '.tmp', JSON.stringify(rows)); renameSync(out + '.tmp', out); console.log(`✅ YouBike 站點 ${rows.length} 站 → ${out}${existsSync(out + '.bak') ? '（舊檔備份成 .bak）' : ''}`); }
+  }
+}

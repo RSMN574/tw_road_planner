@@ -161,7 +161,7 @@ export function etaState(it, now) {
 // 沿方案逐段計算：候車（即時 ETA／預定時刻／系統推估）、乘車、轉乘、總旅行時間
 
 export async function annotateJourney(sug, depMs, force) {
-  const now = State.tdxNow(), legs = [], upds = [], near = Math.abs(depMs - now) < 120e3; let t = depMs + sug.walkIn / WALK_MPS * 1000, ok = true;
+  const now = State.tdxNow(), legs = [], upds = [], near = Math.abs(depMs - now) < 120e3; let t = depMs + (sug.bikeIn ? sug.bikeIn.sec : sug.walkIn / WALK_MPS) * 1000, ok = true;
   const infos = await Promise.all(sug.rides.map(r => resolveRide(r, force)));      // 只取方案用到的路線；相同路線的請求自動合併
   for (let q = 0; q < sug.rides.length; q++) {
     const ride = sug.rides[q], inf = infos[q];
@@ -171,7 +171,7 @@ export async function annotateJourney(sug, depMs, force) {
       const board = t + METRO_WAIT_S * 1000, alight = board + ride.sec * 1000;
       Object.assign(leg, { eta: { kind: 'metro', text: '捷運：沒有即時／時刻資料' }, boardAt: board, alightAt: alight, waitS: METRO_WAIT_S, waitSrc: '系統推估', rideS: ride.sec, rideSrc: '系統推估', metro: true, dest: '' });
       leg.notes.push(`捷運：以假設班距 ${METRO_HEADWAY_S / 60} 分鐘計算候車，行駛時間為估計`);
-      legs.push(leg); t = alight + (q < sug.rides.length - 1 ? GROUP_WALK_S * 1000 : sug.walkOut / WALK_MPS * 1000); continue;
+      legs.push(leg); t = alight + (q < sug.rides.length - 1 ? GROUP_WALK_S * 1000 : (sug.bikeOut ? sug.bikeOut.sec : sug.walkOut / WALK_MPS) * 1000); continue;
     }
     if (inf.errors.length) leg.notes.push('TDX 連線失敗：' + inf.errors.join('、') + (inf.etaRec.stale || inf.ttRec.stale ? '（改用較舊的快取）' : ''));
     if (!inf.errors.length && !(inf.etaRec.data || []).length && !(inf.ttRec.data || []).length) leg.notes.push('TDX 沒有這條路線的 ETA 與時刻表（可能今日未營運，或路線名稱與 TDX 不符）');
@@ -205,7 +205,7 @@ export async function annotateJourney(sug, depMs, force) {
     else { alight = board + ride.sec * 1000; rideSrc = '系統推估'; }
     Object.assign(leg, { boardAt: board, alightAt: alight, waitS: (board - t) / 1000, waitSrc, rideS: (alight - board) / 1000, rideSrc, dest: trip?.dest || inf.trips[0]?.dest || '' });
     legs.push(leg); upds.push(es.updMs, inf.etaRec.at, inf.ttRec.at);
-    t = alight + (q < sug.rides.length - 1 ? GROUP_WALK_S * 1000 : sug.walkOut / WALK_MPS * 1000);
+    t = alight + (q < sug.rides.length - 1 ? GROUP_WALK_S * 1000 : (sug.bikeOut ? sug.bikeOut.sec : sug.walkOut / WALK_MPS) * 1000);
   }
   return { legs, ok, arriveMs: ok ? t : null, totalS: ok ? (t - depMs) / 1000 : null, transfers: sug.rides.length - 1, updatedAt: Math.min(...upds.filter(isFinite)), depMs };
 }

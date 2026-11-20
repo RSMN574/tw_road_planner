@@ -1,0 +1,25 @@
+{
+  "downloads": [
+    {
+      "file": "taiwan-20261117.osm.pbf",
+      "url": "manual",
+      "downloadedAt": "2026-11-18T10:17:08.000Z",
+      "registeredAt": "2026-11-18T15:58:41.562Z",
+      "bytes": 328606718,
+      "md5": "1f9b03d89780a6f02633f78934436d82",
+      "md5Verified": false,
+      "pbf": {
+        "replicationTimestamp": "2026-11-17T21:24:30.000Z",
+        "sequence": 4973,
+        "baseUrl": "https://download.geofabrik.de/asia/taiwan-updates",
+        "writingProgram": "osmium/1.16.0",
+        "bbox": {
+          "left": 118.1036,
+          "right": 122.9312,
+          "top": 26.60305,
+          "bottom": 20.72799
+        }
+      }
+    }
+  ]
+}

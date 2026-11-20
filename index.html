@@ -45,6 +45,8 @@
       <div class="search-result" id="toResult"></div>
       <div class="hint" id="toInfo">未設定</div>
     </div>
+    <div class="row" id="osmRow" hidden><label style="font-size:12px;display:block"><input type="checkbox" id="osmOn" checked style="width:auto"> 🗺 使用全台 OSM 道路圖（伺服器計算路線）</label>
+      <div class="hint" id="osmHint"></div></div>
     <div class="row"><label>交通方式</label>
       <select id="mode" style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">
         <option value="car" selected>🚗 汽車</option><option value="heavy">🏍 重型機車（不走國道）</option><option value="moto">🛵 一般機車（不走國道、快速道路）</option><option value="bike">🚲 腳踏車（優先自行車道）</option><option value="walk">🚶 步行</option><option value="transit">🚌 大眾運輸（公車＋捷運）</option></select>
@@ -137,6 +139,19 @@
   <svg id="routeSvg" xmlns="http://www.w3.org/2000/svg"></svg>
   <svg id="navOverlay" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
   <div id="tip"></div>
+  <div id="mapCtl" aria-label="地圖控制">
+    <button id="mapZoomIn" type="button" title="放大（＋ 鍵、滾輪、雙擊）" aria-label="放大">＋</button>
+    <div id="mapZoom" title="縮放層級（與一般網頁地圖相同的 z；範圍 z5～z21）">—</div>
+    <button id="mapZoomOut" type="button" title="縮小（－ 鍵、滾輪、Shift＋雙擊）" aria-label="縮小">－</button>
+    <button id="mapNorth" type="button" title="北朝上" aria-label="北朝上"><span>⬆</span></button>
+    <button id="mapRotL" type="button" title="向左旋轉 15°（或右鍵拖曳）" aria-label="向左旋轉">⟲</button>
+    <button id="mapRotR" type="button" title="向右旋轉 15°（或右鍵拖曳）" aria-label="向右旋轉">⟳</button>
+    <button id="mapPitch" type="button" title="2D／3D 視角（右鍵上下拖曳可調整俯仰角）" aria-pressed="false">3D</button>
+    <button id="mapFit" type="button" title="顯示全圖" aria-label="顯示全圖">⤢</button>
+  </div>
+  <div id="mapScale" aria-label="比例尺">—</div>
+  <div id="mapZoomHint" hidden>超過底圖圖磚的原生層級（z19）：向量放大，線條不會模糊</div>
+  <div id="osmAttr" hidden>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
   <div id="placeholder">
     <div class="icon">🗺️</div>
     <div>請先載入路網 JSON，再選擇起點與終點</div>
@@ -148,7 +163,7 @@
 <div id="offlineBar" hidden>目前離線：已載入的地圖與頁面仍可使用，TDX 即時資料與重新規劃需要網路</div>
 <div id="navUI" hidden>
   <div id="navTop"><div id="navArrow">⬆</div><div class="txt"><div id="navDist">—</div><div id="navRoad"></div><div id="navThen"></div></div></div>
-  <div id="navChips"><span id="gpsChip" data-s="idle">GPS 未啟動</span></div>
+  <div id="navChips"><span id="gpsChip" data-s="idle">GPS 未啟動</span><button id="navOrient" type="button">🧭 車頭朝上</button></div>
   <div id="navMsg" hidden></div>
   <button id="navRecenter" type="button" hidden>◎ 回到定位</button>
   <div id="navVoicePanel" hidden>
@@ -157,11 +172,13 @@
     <label>音量 <input type="range" id="vVol" min="0" max="1" step="0.1" value="1"></label>
     <label>提示距離 <select id="vDist"><option value="0.6">近</option><option value="1" selected>標準</option><option value="1.5">遠</option></select></label>
     <label><input type="checkbox" id="navSmooth" checked> 箭頭平滑移動（關閉較省電）</label>
+    <label><input type="checkbox" id="navTilt" checked> 行進中傾斜視角（3D）</label>
+    <button id="navLog" type="button">⬇ 下載行程紀錄</button>
     <button id="vTest" type="button">測試語音</button>
   </div>
   <div id="navBottom">
     <div class="info"><div><small>剩餘距離</small><b id="navRem">—</b></div><div><small>預計抵達</small><b id="navEta">—</b></div><div><small>剩餘時間</small><b id="navLeft">—</b></div></div>
-    <div class="note">時間為系統推估（依速限，未含壅塞與收費）</div>
+    <div class="note" id="navNote">時間為系統推估</div>
     <div class="btns"><button id="navPause" type="button">⏸ 暫停</button><button id="navRepeat" type="button">🔁 重複</button><button id="navVoiceBtn" type="button">🔊 語音</button><button id="navEnd" type="button" class="danger">結束</button></div>
   </div>
 </div>

@@ -45,9 +45,13 @@ export const NEARBY_MAX_EDGES = 80000;
 export const WALK_MPS = 1.2, WALK_MAX_M = 500, BOARD_WAIT_S = 300, TRANSFER_S = 300, GROUP_WALK_S = 90, BUS_MPS = 5.56;
 // 捷運（metro.json 只有站點，沒有班距／行駛時間／時刻表，以下都是「假設」，介面上一律標示為系統推估）
 export const METRO_HEADWAY_S = 480, METRO_WAIT_S = METRO_HEADWAY_S / 2, METRO_MPS = 9.7, METRO_DWELL_S = 30, METRO_CURVE = 1.15, MRT_TRANSFER_M = 150;
+// 捷運轉乘（系統推估，介面一律標示）：進出站（街道 ↔ 月台，含閘門、電扶梯）、跨線換月台；候選範圍是「直線距離」，實際步行距離另由道路圖計算
+export const METRO_ACCESS_S = 90, METRO_PLATFORM_S = 120, METRO_XFER_R = 300, METRO_LINE_XFER_R = 300, WALK_NET_MAX_M = 900, WALK_DETOUR = 1.4;
 export const LINE_NAME = { G: '捷運綠線' };
 
 export const MAX_BUS_OPTS = 8;
+// YouBike 接駁（大眾運輸的第一／最後一哩）：全部是假設值，結果一律標示「推估」；可借車輛與空位沒有即時資料
+export const YB_WALK_M = 400, YB_DOCK_M = 250, YB_RENT_S = 60, YB_RETURN_S = 60, YB_MAX_S = 900, YB_MIN_M = 500, YB_STOPS = 14;
 
 export const CLS = { unknown: 0, general: 1, major: 2, minor: 3, alley: 4, bike: 5, walk: 6, other: 7, freeway: 8, expressway: 9 };
 

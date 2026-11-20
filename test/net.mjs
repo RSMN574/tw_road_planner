@@ -1,4 +1,5 @@
 // 以本機 HTTP 伺服器測試 TDX 連線層（不是 stub）：token 驗證、錯誤分階段、Proxy、CORS 預檢、token 過期重試
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 const els={};const el=id=>els[id]||(els[id]={id,innerHTML:'',textContent:'',value:'',style:{},dataset:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},appendChild(){}});
@@ -40,12 +41,12 @@ mode='expire';expired=false;TDX.retries=2;State.tdxToken={value:null,exp:0};toke
 State.tdxToken={value:null,exp:0};let d=await tdxDiagnose();log('⑦ 連線測試（正常）：',d.map(x=>(x.ok?'✅':'❌')+x.name+' '+x.detail).join(' ｜ '));
 mode='tokenbug';State.tdxToken={value:null,exp:0};d=await tdxDiagnose();log('   連線測試（token 端點出錯）：',d.map(x=>(x.ok?'✅':'❌')+x.name+' '+x.detail.slice(0,60)).join(' ｜ '));mode='ok';
 // 8) Proxy：真的啟動 proxy.mjs，指向 mock
-const px=spawn('node',['proxy.mjs'],{env:{...process.env,TOKEN_URL:M+'/tokens',API_KEY:'K',PORT:'0',UPSTREAM:M+'/v2'},cwd:new URL('..',import.meta.url).pathname});
+const px=spawn('node',['proxy.mjs'],{env:{...process.env,TOKEN_URL:M+'/tokens',API_KEY:'K',PORT:'0',UPSTREAM:M+'/v2'},cwd:fileURLToPath(new URL('..',import.meta.url))});
 const PP=await new Promise((ok,bad)=>{px.stdout.on('data',d=>{const m=/:(\d+)\s+→/.exec(String(d));if(m)ok(+m[1]);});px.stderr.on('data',d=>bad(new Error(String(d))));setTimeout(()=>bad(new Error('proxy 沒有啟動')),4000);});
 const PX=`http://127.0.0.1:${PP}`;
 const pre=await realFetch(PX+'/api/Bus/EstimatedTimeOfArrival/City/Taichung/307',{method:'OPTIONS'});log('⑧ Proxy CORS 預檢：',pre.status,'｜Access-Control-Allow-Origin =',pre.headers.get('access-control-allow-origin'));
 Object.assign(TDX,{proxy:PX,apiKey:''});apiCalls=0;tokenCalls=0;r=await tdxGet('EstimatedTimeOfArrival','307');log('   透過 Proxy（頁面不需金鑰）：',r.length,'筆｜token 由 proxy 取得',tokenCalls,'次，且瀏覽器端沒有送出 Authorization');
-mode='tokenbug';px.kill();const px2=spawn('node',['proxy.mjs'],{env:{...process.env,TOKEN_URL:M+'/tokens',API_KEY:'K',PORT:'0',UPSTREAM:M+'/v2'},cwd:new URL('..',import.meta.url).pathname});
+mode='tokenbug';px.kill();const px2=spawn('node',['proxy.mjs'],{env:{...process.env,TOKEN_URL:M+'/tokens',API_KEY:'K',PORT:'0',UPSTREAM:M+'/v2'},cwd:fileURLToPath(new URL('..',import.meta.url))});
 const PP2=await new Promise(ok=>px2.stdout.on('data',d=>{const m=/:(\d+)\s+→/.exec(String(d));if(m)ok(+m[1]);}));Object.assign(TDX,{proxy:`http://127.0.0.1:${PP2}`});
 try{await tdxGet('EstimatedTimeOfArrival','307');}catch(e){log('⑨ Proxy 遇到 token 端點出錯 →',e.kind,e.status,'｜',describeTdxError(e).slice(0,110));}
 px2.kill();mock.close();process.exit(0);

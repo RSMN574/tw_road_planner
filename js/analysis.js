@@ -2,7 +2,7 @@
 import { Hooks, State } from './state.js';
 import { speedText } from './vehicle.js';
 import { CLS, COS30, hlCache } from './constants.js';
-import { isGeo, nodeDist, worldDistM } from './geo.js';
+import { isGeo, nodeDist, worldDistM, worldHaversine } from './geo.js';
 import { edgeRoad, ensureFrom } from './graph-core.js';
 import { ensureRA } from './road-attrs.js';
 import { ubNear } from './ubike.js';
@@ -16,6 +16,7 @@ export function buildAvoidSet(q) {
 }
 
 export function roadSeqOf(r) {
+  if (r._osm) { const s = []; for (const n of r._osm.roads || []) if (s[s.length - 1] !== n) s.push(n); return s; }   // 伺服器 OSM 路線
   const seq = []; let last = null;
   for (const k of r.edgePath) { const n = edgeRoad(k); if (n && n !== last) { seq.push(n); last = n; } }
   return seq;
@@ -24,6 +25,7 @@ export function roadSeqOf(r) {
 // 世界座標 y 向上：cross>0 為逆時針 = 左轉；cross<0 = 右轉
 
 export function generateManeuvers(route) {
+  if (route._osm) return route._man || [];                     // 伺服器 OSM 路線：導航步驟由伺服器算好（osm.js 轉換）
   const { path, edgePath, coords } = route;
   if (path.length < 2) return [];
   const kx = isGeo() ? Math.cos(coords[0][1] * Math.PI/180) : 1;
@@ -50,6 +52,7 @@ export function generateManeuvers(route) {
 
 export function segmentsOf(route) {         // 涵蓋所有邊（含無路名段）；len 單位：projected 用 adjW，wgs84 用 haversine
   if (route._segs) return route._segs;
+  if (route._osm) return route._segs = osmSegments(route);
   const segs = [], ep = route.edgePath, n = ep.length;
   let cur = '', st = 0;
   for (let i = 0; i < n; i++) {
@@ -64,6 +67,16 @@ export function segmentsOf(route) {         // 涵蓋所有邊（含無路名段
     sg.len = len;
   }
   return route._segs = segs;
+}
+
+// 伺服器 OSM 路線：依每段所屬的 way 路名分段（start／end 是 coords 的段號，與本機路線相同）；len 用大圓距離
+function osmSegments(route) {
+  const sr = route._osm, T = sr.timing || {}, sw = T.segWay || [], ll = route._ll, segs = [], nm = i => { const w = sr.ways[sw[i]]; return w ? (w.name || w.ref || '') : ''; };
+  let cur = '', st = 0;
+  for (let i = 0; i < sw.length; i++) { const n = nm(i); if (!i) cur = n; else if (n !== cur) { segs.push({ name: cur, start: st, end: i }); cur = n; st = i; } }
+  if (sw.length) segs.push({ name: cur, start: st, end: sw.length });
+  for (const sg of segs) { let len = 0; for (let i = sg.start; i < sg.end; i++) len += worldHaversine(ll[i][0], ll[i][1], ll[i + 1][0], ll[i + 1][1]); sg.len = len; }
+  return segs;
 }
 
 export function roadEdges(name) {           // 該路所有邊（兩端都屬於該路節點、且邊的路名不與之矛盾）
@@ -87,6 +100,7 @@ export function roadEdges(name) {           // 該路所有邊（兩端都屬於
 // ============================================================
 
 export function routeMetrics(r) {
+  if (r._osm) return null;                                     // 伺服器 OSM 路線：沒有本機的道路屬性（適宜性等）
   const ra = ensureRA(), ep = r.edgePath, met = { len: 0, suit: 0, unkLen: 0, forbN: 0, confirm: new Map(), ub: null };
   let sl = 0;
   for (const k of ep) {
@@ -220,6 +234,7 @@ export function suggestStops(route, S) {
 }
 
 export function stopsOf(route) {
+  if (route._osm) return null;                                 // 公車站點建議需要本機路網
   const S = Math.max(150, +qv('stopGap', 400) || 400), key = `${S}|${State.UB ? State.UB.n : 0}|${State.bus ? State.bus.n : 0}|${State.RA ? State.RA.m : 0}`;
   if (route._stopsKey !== key) { route._stops = suggestStops(route, S); route._stopsKey = key; }
   return route._stops;

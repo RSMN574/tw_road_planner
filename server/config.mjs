@@ -34,8 +34,15 @@ export function readConfig(env = process.env) {
     trustProxy: bool(env.TRUST_PROXY, false),                  // 放在 Caddy／Nginx 後面時設 1，才會用 X-Forwarded-For 判斷用戶 IP
     corsOrigins: (env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),   // 預設不開放跨網域（同網域的網頁不需要）
     rateLimit: num(env.RATE_LIMIT_PER_MIN, 120), tdxRateLimit: num(env.TDX_RATE_LIMIT_PER_MIN, 60),
+    // 全台 OSM 道路圖（tools/osm/osm-build.mjs 產生）：OSM=0 關閉；OSM_GRAPH_DIR 預設 data/osm/graph；OSM_WARM：啟動時先建好的運具（逗號分隔，空白＝不預熱）
+    osm: { enabled: bool(env.OSM, true), dir: path.resolve(data, env.OSM_GRAPH_DIR || 'osm/graph'), warm: String(env.OSM_WARM ?? 'car').split(',').map(s => s.trim()).filter(Boolean) },
+    // v1.11 全台大眾運輸規劃（/api/v1/transit/plan）：tools/transit-sync.mjs 抓到 CACHE_DIR/transit 的 TDX 資料（城市公車、捷運／輕軌、台鐵、高鐵）
+    transit: { city: env.TRANSIT_CITY ?? 'Taichung', metro: String(env.TRANSIT_METRO ?? 'TMRT').split(',').map(s => s.trim()).filter(Boolean),
+               rail: String(env.TRANSIT_RAIL ?? 'TRA,THSR').split(',').map(s => s.trim()).filter(Boolean), maxWalkM: num(env.TRANSIT_MAX_WALK_M, 1000) },
     maxSnapM: num(env.MAX_SNAP_M, 1000), defaultAlgo: env.ROUTER || 'astar', altCache: num(env.ALT_CACHE, 12), warm: bool(env.WARMUP, true),
     adminToken: env.ADMIN_TOKEN || '', watch: bool(env.WATCH_DATA, false), log: bool(env.LOG, true),
+    // 路線計算放到背景執行緒（worker_threads）：0＝在主執行緒同步計算；N＝N 個背景執行緒，每個各載入一份路網（記憶體約 N 倍）
+    workers: Math.max(0, Math.min(16, num(env.WORKERS, 0) | 0)), workerTimeoutMs: num(env.WORKER_TIMEOUT_MS, 60000),
     // TDX：向 token 端點（例如 rsmn574.com 的 POST /tokens）取得 token；掛在 server_2 裡時改由 server_2 的 token.txt 提供（見 server/express-mount.mjs）
     tdx: { tokenUrl: env.TDX_TOKEN_URL || '', apiKey: env.TDX_API_KEY || '', ts: env.TDX_TS || '',
            upstream: env.TDX_UPSTREAM || 'https://tdx.transportdata.tw/api/basic/v2', cacheMs: num(env.TDX_CACHE_MS, 15000), timeoutMs: num(env.TDX_TIMEOUT_MS, 10000) }

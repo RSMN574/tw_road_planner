@@ -8,6 +8,7 @@ export const VoiceTemplates = {
   minutes(s) { const m = Math.max(1, Math.round(s / 60)); return m >= 60 ? `${Math.floor(m / 60)}小時${m % 60 ? (m % 60) + '分鐘' : ''}` : `${m}分鐘`; },
   action(st) {
     if (st.turnType === 'arrive') return '抵達目的地';
+    if (st.turnType === 'ferry') return '搭乘渡輪';
     const d = st.dir === 'left' ? '左' : st.dir === 'right' ? '右' : '';
     switch (st.turnType) { case 'uturn': return '迴轉'; case 'sharp': return `向${d || '右'}後方轉彎`; case 'slight': return `稍微向${d || '右'}轉`; case 'turn': return `${d || '右'}轉`; default: return '直行'; }
   },

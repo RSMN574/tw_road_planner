@@ -30,7 +30,7 @@ export function drawArrows(route) {
       ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', '#f59e0b'); ring.setAttribute('stroke-width', '3');
       svg.appendChild(ring);
     }
-    if (s.turnType === 'start' || s.turnType === 'arrive') continue;
+    if (s.turnType === 'start' || s.turnType === 'arrive' || !c[s.index + 1]) continue;
     const [x2, y2] = worldToScreen(c[s.index+1][0], c[s.index+1][1]);   // 方向 = v2（以螢幕向量計算，自動處理 y 翻轉與 cos）
     const L = Math.hypot(x2 - x, y2 - y) || 1, ux = (x2 - x) / L, uy = (y2 - y) / L, px = -uy, py = ux;
     const t = document.createElementNS(NS, 'path');
@@ -91,7 +91,7 @@ export function nearbyEdges(route) {
 
 export function drawNearby(route) {
   if (!State.showNearby || !State.base) return;
-  const w = svg.clientWidth, h = svg.clientHeight, e = nearbyEdges(route), mx = Math.max(20, w * 0.4), my = Math.max(20, h * 0.4);   // 多畫畫面外 40%：快速平移時邊緣不會露白
+  const w = svg.clientWidth, h = svg.clientHeight, e = nearbyEdges(route), big = State.nav ? Math.max(w, h) * 0.65 : 0, mx = Math.max(20, w * 0.4, big), my = Math.max(20, h * 0.4, big);   // 多畫畫面外 40%：快速平移時邊緣不會露白；導航中（可能旋轉、傾斜）多畫更多
   let d = '';
   for (let i = 0; i < e.length; i += 2) {
     const [x1, y1] = worldToScreen(State.nodeXY[e[i]*5+2], State.nodeXY[e[i]*5+3]);
@@ -127,17 +127,23 @@ export function drawBus() {
   drawBusDots();
   if (!State.busSug || State.busSug.error) return;
   const NS = 'http://www.w3.org/2000/svg', b = State.bus;
-  const line = (d, dash, w) => {
+  const line = (d, dash, w, color = '#7c3aed') => {
     const p = document.createElementNS(NS, 'path');
-    p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', '#7c3aed'); p.setAttribute('stroke-width', w);
+    p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', color); p.setAttribute('stroke-width', w);
     p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round'); p.setAttribute('opacity', '0.9');
     if (dash) p.setAttribute('stroke-dasharray', dash);
     svg.appendChild(p);
   };
   const P = (x, y) => worldToScreen(x, y).map(v => v.toFixed(1)).join(',');
   const first = State.busSug.rides[0].stops[0], lastR = State.busSug.rides[State.busSug.rides.length - 1], last = lastR.stops[lastR.stops.length - 1];
-  line(`M${P(State.busSug.ox, State.busSug.oy)}L${P(b.sx[first], b.sy[first])}`, '4 5', 2);      // 步行
-  line(`M${P(b.sx[last], b.sy[last])}L${P(State.busSug.dx, State.busSug.dy)}`, '4 5', 2);
+  // 起終點：步行（虛線）；有 YouBike 接駁時：步行到借車站 → 騎車（沿道路，橘色）→ 步行到站
+  const U = State.UB, bikeSeg = (bk, ax, ay, zx, zy) => { const r = bk.rent, t = bk.ret;
+    line(`M${P(ax, ay)}L${P(U.x[r], U.y[r])}`, '4 5', 2); line('M' + bk.path.map(([x, y]) => P(x, y)).join('L'), null, 4, '#ea580c'); line(`M${P(U.x[t], U.y[t])}L${P(zx, zy)}`, '4 5', 2);
+    for (const i of [r, t]) { const [x, y] = worldToScreen(U.x[i], U.y[i]), c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', '5'); c.setAttribute('fill', '#ea580c'); c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', '2'); svg.appendChild(c); } };
+  if (State.busSug.bikeIn && U && U.x) bikeSeg(State.busSug.bikeIn, State.busSug.ox, State.busSug.oy, b.sx[first], b.sy[first]);
+  else line(`M${P(State.busSug.ox, State.busSug.oy)}L${P(b.sx[first], b.sy[first])}`, '4 5', 2);      // 步行
+  if (State.busSug.bikeOut && U && U.x) bikeSeg(State.busSug.bikeOut, b.sx[last], b.sy[last], State.busSug.dx, State.busSug.dy);
+  else line(`M${P(b.sx[last], b.sy[last])}L${P(State.busSug.dx, State.busSug.dy)}`, '4 5', 2);
   for (const r of State.busSug.rides) {
     line('M' + legCoordsOf(r).map(([x, y]) => P(x, y)).join('L'), null, 4);   // 沿道路，不是站與站的直線
     for (const i of [r.stops[0], r.stops[r.stops.length - 1]]) {
@@ -163,7 +169,7 @@ export function drawUbike() {                             // 放大後顯示站�
 }
 
 export function drawStops(route) {
-  if (!document.getElementById('showStops').checked || !State.base) return;
+  if (!document.getElementById('showStops').checked || !State.base || route._osm) return;
   const sg = stopsOf(route); if (!sg) return;
   const NS = 'http://www.w3.org/2000/svg';
   for (const s of sg.stops) {

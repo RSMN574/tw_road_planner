@@ -62,6 +62,9 @@
   /* 導航箭頭另外一層：箭頭每幀移動時，瀏覽器只重繪這一小層，不必重繪整張地圖 */
   #navOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; will-change: transform; }   /* will-change：自己一個合成層 */
   html[data-theme="dark"] #navOverlay { filter: invert(.92) hue-rotate(180deg); }
+  #osmAttr { position: absolute; right: 4px; bottom: 4px; font-size: 10px; color: #475569; background: rgba(255,255,255,.75); padding: 1px 5px; border-radius: 3px; z-index: 2; }
+  #osmAttr a { color: inherit; }
+  body.navigating #osmAttr { bottom: auto; top: 4px; }
   #placeholder {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center;
@@ -194,3 +197,41 @@ html[data-theme="dark"] #routeSvg { filter: invert(.92) hue-rotate(180deg); }   
 html[data-theme="dark"] #navBottom, html[data-theme="dark"] #navVoicePanel { background: #111827; color: #e5e7eb; }
 html[data-theme="dark"] #navBottom .info small { color: #9ca3af; }
 html[data-theme="dark"] #navRecenter { background: #1f2937; color: #93c5fd; }
+
+/* 導航：方向切換鈕、ETA 說明列（定位異常時變色） */
+#navChips { display: flex; align-items: center; gap: 6px; }
+#navOrient { width: auto; min-height: 0; padding: 3px 9px; border-radius: 12px; border: 1px solid #cbd5e1; background: #fff; color: #0f172a; font-size: 12px; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.25); pointer-events: auto; }
+#navOrient:hover:not(:disabled) { background: #e2e8f0; }
+#navNote[data-bad="1"] { color: #b45309; font-weight: 600; }
+#routeSvg, #navOverlay { transition: none; }
+body.navigating #routeSvg, body.navigating #navOverlay { will-change: transform; }   /* 導航中：地圖層獨立合成，旋轉／傾斜時不重畫整個頁面 */
+html[data-theme="dark"] #osmAttr { background: rgba(15,23,42,.75); color: #94a3b8; }
+
+/* v1.11 地圖控制：縮放層級、比例尺、指北針、2D／3D（map-view.js） */
+#mapCtl { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 4px; z-index: 3; }
+#mapCtl button { width: 34px; height: 34px; padding: 0; border-radius: 8px; border: 1px solid #cbd5e1; background: rgba(255,255,255,.95); color: #1e293b; font-size: 17px; line-height: 1; box-shadow: 0 1px 3px rgba(0,0,0,.15); cursor: pointer; }
+#mapCtl button:disabled { opacity: .4; cursor: default; }
+#mapCtl button[aria-pressed="true"] { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+#mapZoom { font-size: 11px; text-align: center; color: #334155; background: rgba(255,255,255,.85); border-radius: 6px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+#mapNorth span { display: inline-block; transform: rotate(var(--rot, 0deg)); transition: transform .2s; color: #dc2626; }
+#mapScale { position: absolute; left: 10px; bottom: 6px; z-index: 2; font-size: 10px; color: #334155; border: 1.5px solid #334155; border-top: none; height: 8px; line-height: 0; padding: 0 3px; background: rgba(255,255,255,.6); text-align: right; }
+#mapZoomHint { position: absolute; left: 50%; transform: translateX(-50%); top: 8px; z-index: 2; font-size: 11px; color: #475569; background: rgba(255,255,255,.88); padding: 3px 8px; border-radius: 10px; }
+#mapZoomHint[hidden] { display: none; }
+body.navigating #mapCtl, body.navigating #mapScale, body.navigating #mapZoomHint { display: none; }
+html[data-theme="dark"] #mapCtl button { background: rgba(31,41,55,.95); color: #e5e7eb; border-color: #475569; }
+html[data-theme="dark"] #mapZoom, html[data-theme="dark"] #mapScale { background: rgba(15,23,42,.75); color: #cbd5e1; border-color: #cbd5e1; }
+@media (max-width: 760px) { #mapCtl { top: auto; bottom: 90px; } #mapCtl #mapRotL, #mapCtl #mapRotR { display: none; } }
+
+/* v1.11 全台大眾運輸方案（transit-plan.js） */
+.tp-modes { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; margin-top: 6px; }
+.tp-modes label { display: inline-flex; align-items: center; gap: 3px; margin: 0; }
+.tp-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.tp-opt { border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 8px; cursor: pointer; font-size: 12px; }
+.tp-opt.sel { border-color: #2563eb; background: #eff6ff; }
+.tp-h { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.tp-tag { font-style: normal; font-size: 10px; background: #1d4ed8; color: #fff; border-radius: 8px; padding: 0 6px; }
+.tp-i { margin: 3px 0; font-size: 14px; } .tp-i small { font-size: 10px; color: #475569; margin-left: 1px; }
+.tp-m { color: #475569; }
+.tp-legs { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.tp-leg { display: flex; gap: 6px; padding: 4px 6px; border-left: 4px solid #cbd5e1; background: rgba(148,163,184,.08); border-radius: 4px; }
+html[data-theme="dark"] .tp-opt.sel { background: #1e3a8a; }

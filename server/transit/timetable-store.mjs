@@ -11,11 +11,12 @@ import { DAY_S, runsOn } from './time.mjs';
 
 const UNKNOWN = -1;
 
-export function createStore({ bus = null, metros = [], builtAt = Date.now(), datasetHashes = {} } = {}) {
+// v1.11：rails（台鐵、高鐵：rail-provider.buildRail 的結果）與 metros 同格式，一起進同一個資料庫
+export function createStore({ bus = null, metros = [], rails = [], builtAt = Date.now(), datasetHashes = {} } = {}) {
   const stops = [], stopIndex = new Map(), warnings = [], patterns = [];
   const addStops = list => { for (const s of list || []) { if (stopIndex.has(s.uid)) { warnings.push(`站點 UID 重複，保留第一筆：${s.uid}`); continue; } stopIndex.set(s.uid, stops.length); stops.push(s); } };
-  if (bus) addStops(bus.stops); for (const m of metros) addStops(m.stops);
-  const srcPatterns = [...(bus?.patterns || []), ...metros.flatMap(m => m.patterns)];
+  if (bus) addStops(bus.stops); for (const m of metros) addStops(m.stops); for (const r of rails) addStops(r.stops);
+  const srcPatterns = [...(bus?.patterns || []), ...metros.flatMap(m => m.patterns), ...rails.flatMap(r => r.patterns)];
   const stopPatterns = stops.map(() => []);
   let dropped = 0;
   for (const p of srcPatterns) {
@@ -41,7 +42,7 @@ export function createStore({ bus = null, metros = [], builtAt = Date.now(), dat
       // 當日班表（daily）有今天的資料就只用它；沒有才用固定班表（schedule）依星期幾判斷。兩者都沒有 → 'none'（資訊不足，不是停駛）
       const daily = p.trips.filter(t => t.kind === 'daily' && t.date === dateStr);
       let use = daily, src = 'daily';
-      if (!use.length) { src = 'schedule'; use = p.trips.filter(t => t.kind === 'schedule' && runsOn(t.days, dateStr) !== false); }
+      if (!use.length) { src = 'schedule'; use = p.trips.filter(t => t.kind === 'schedule' && runsOn(t.days, dateStr) !== false && (!t.effective || ((!t.effective.from || dateStr >= t.effective.from) && (!t.effective.to || dateStr <= t.effective.to)))); }
       if (!use.length) { info[pi] = p.trips.some(t => t.kind === 'schedule' && t.days != null) ? 'not-today' : (p.freqs.length ? 'frequency' : 'none'); return; }
       info[pi] = src;
       const S = p.stops.length, first = t => { for (let i = 0; i < S; i++) if (Number.isFinite(t.dep[i])) return t.dep[i]; return Infinity; };
@@ -94,10 +95,11 @@ export function createStore({ bus = null, metros = [], builtAt = Date.now(), dat
     for (const x of use) if ((x.first == null || tSec >= x.first) && (x.last == null || tSec <= x.last)) return { state: 'open', first: x.first, last: x.last, source: x.source };
     const x = use[0]; return { state: 'closed', first: x.first, last: x.last, source: x.source, before: x.first != null && tSec < x.first };
   }
-  const stats = { stops: stops.length, busStops: stops.filter(s => s.mode === 'bus').length, metroStations: stops.filter(s => s.mode === 'metro').length, patterns: patterns.length,
+  const byMode = {}; for (const st of stops) byMode[st.mode] = (byMode[st.mode] || 0) + 1;
+  const stats = { byMode, railStations: stops.filter(x => x.mode === 'tra' || x.mode === 'thsr').length, stops: stops.length, busStops: stops.filter(s => s.mode === 'bus').length, metroStations: stops.filter(s => s.mode === 'metro').length, patterns: patterns.length,
     busPatterns: patterns.filter(p => p.mode === 'bus').length, metroPatterns: patterns.filter(p => p.mode === 'metro').length,
     trips: patterns.reduce((a, p) => a + p.trips.length, 0), estimatedTrips: patterns.reduce((a, p) => a + p.trips.filter(t => t.est).length, 0),
     noServiceInfo: patterns.filter(p => !p.trips.length && !p.freqs.length).length };
   return { version, builtAt, stops, stopIndex, patterns, stopPatterns, warnings: [...(bus?.warnings || []), ...metros.flatMap(m => m.warnings), ...warnings],
-    transfers: metros.flatMap(m => m.transfers || []), exits: metros.flatMap(m => m.exits || []), stats, day, earliest, latest, freqAt, serviceState, UNKNOWN };
+    transfers: [...metros.flatMap(m => m.transfers || []), ...rails.flatMap(r => r.transfers || [])], exits: metros.flatMap(m => m.exits || []), stats, day, earliest, latest, freqAt, serviceState, UNKNOWN };
 }

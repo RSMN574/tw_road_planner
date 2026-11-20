@@ -17,7 +17,7 @@ import { loadUbike } from '../js/ubike.js';
 import { planAll } from '../js/planners.js';
 import { generateManeuvers } from '../js/analysis.js';
 import { matchToRoad } from '../js/mapmatch.js';
-import { pickRecommended, suggestBusMulti } from '../js/bus-plan.js';
+import { legsOf, pickRecommended, suggestBusMulti } from '../js/bus-plan.js';
 import { legCoordsOf, routeKindOf } from '../js/bus-core.js';
 import { VEHICLES } from '../js/vehicle.js';
 import { ALGO } from '../js/constants.js';
@@ -42,11 +42,23 @@ export function loadData(cfg) {
   mtimes = sig(F);
   const rel = f => f ? path.relative(cfg.dataDir, f).split(path.sep).join('/') : null;
   info = { loaded: true, loadedFrom: pack ? pack.from : 'json', nodes: State.N, edges: State.E, roads: State.roadNames.length, coordType: State.coordType, graphVersion: State.graphVersion, loadedAt: new Date().toISOString(), loadMs: Date.now() - t0,
-    data: loaded, warnings: warn, transitStops: State.bus ? State.bus.n : 0,
+    data: loaded, warnings: warn, transitStops: State.bus ? State.bus.n : 0, transit: transitStats(),
     files: { roadTable: loaded.roadTable ? 'data/' + rel(F.roadTable) : null, bus: loaded.bus ? 'data/' + rel(F.bus) : null, metro: loaded.metro ? 'data/' + rel(F.metro) : null, youbike: loaded.youbike ? 'data/' + rel(F.youbike) : null } };
   return info;
 }
 export const dataInfo = () => info;
+
+// 大眾運輸圖的統計（健康檢查用）：捷運節點、捷運邊、轉乘連結、孤立捷運站、沒有轉乘連結的捷運站
+export function transitStats() {
+  const b = State.bus; if (!b) return null;
+  let mN = 0, mE = 0, iso = 0;
+  for (let i = 0; i < b.n; i++) if (b.stopKind[i] === 'metro') { mN++; if (b.off[i + 1] === b.off[i] && b.inDeg[i] === 0) iso++; }
+  for (let e = 0; e < b.eTo.length; e++) if (b.eRoute[e] >= 0 && b.routeKind[b.eRoute[e]] === 'metro') mE++;
+  const xs = b.xferStats || { metroBus: 0, metroMetro: 0, metroNoLink: [] };
+  return { busStops: b.n - mN, busEdges: b.eTo.length - mE, metroStations: mN, metroEdges: mE, metroLines: State.metroJson ? State.metroJson.lines.map(l => ({ id: l.id, name: l.line, stations: l.stations.length })) : [],
+    metroBusTransfers: xs.metroBus, metroLineTransfers: xs.metroMetro, metroIsolated: iso, metroWithoutTransfer: xs.metroNoLink, metroError: State.metroError || null,
+    metroDataSource: State.metroJson && State.metroJson.meta ? { order: State.metroJson.meta.order, runTime: State.metroJson.meta.runSrc, headway: State.metroJson.meta.frequency ? 'TDX Frequency' : '系統推估', hours: State.metroJson.meta.firstLast ? 'TDX FirstLastTimetable' : '沒有資料' } : null };
+}
 
 // ---------- 路網封包（graph.bin）----------
 // 網頁優先下載封包（小很多、不必在手機上解析 JSON 與建圖）；伺服器重啟時也直接讀封包，不必再解析 JSON。
@@ -179,14 +191,21 @@ export function transit(q) {
   need(); if (!State.bus || !State.bus.x) throw new ApiError(503, 'NO_TRANSIT_DATA', '伺服器沒有載入公車或捷運資料（data/bus/graph.json、data/metro.json）');
   const goal = TRANSIT_GOALS.includes(q.goal) ? q.goal : 'fastest', fp = parseLatLon(q.from, 'from'), tp = parseLatLon(q.to, 'to');
   const [fx, fy] = lonLatToWorld(fp.lon, fp.lat), [tx, ty] = lonLatToWorld(tp.lon, tp.lat), b = State.bus;
-  const opts = withQuery({ mode: 'transit', goal }, () => suggestBusMulti(fx, fy, tx, ty));
+  const ubikeLink = !/^(0|false|no|off)$/i.test(String(q.ubike ?? '1'));                         // YouBike 接駁：預設開（有 YouBike 站點資料時）；ubike=0 關掉
+  const opts = withQuery({ mode: 'transit', goal, ubikeLink }, () => suggestBusMulti(fx, fy, tx, ty));
+  const ybOut = v => (v && typeof v === 'object' && v.kind === 'ubike' ? { name: v.name, uid: v.uid, lat: v.lat, lon: v.lon, kind: 'ubike', capacity: v.cap } : v);
   if (!opts.length || opts[0].error) throw new ApiError(404, 'NO_TRANSIT_ROUTE', (opts[0] && opts[0].error) || '找不到大眾運輸方案');
-  const rec = pickRecommended(opts, goal), stop = i => ({ name: b.names[i], lat: +b.lat[i].toFixed(7), lon: +b.lng[i].toFixed(7), kind: b.stopKind[i] });
+  const rec = pickRecommended(opts, goal), stop = i => ({ name: b.names[i], lat: +b.lat[i].toFixed(7), lon: +b.lng[i].toFixed(7), kind: b.stopKind[i], ...(b.stopLine && b.stopLine[i] ? { line: b.stopLine[i] } : {}) });
   return { mode: 'transit', goal, recommended: rec, estimate: '系統推估（公車候車、捷運班距與速度為假設值）；即時到站請用 /tdx 代理查 TDX ETA',
     options: opts.map((o, i) => ({ recommended: i === rec, pareto: !!o.pareto, totalS: Math.round(o.sec), transfers: o.transfers, walkM: Math.round(o.crit?.walk ?? (o.walkIn + o.walkOut)), waitS: Math.round(o.crit?.wait ?? 0),
-      walkInM: Math.round(o.walkIn), walkOutM: Math.round(o.walkOut),
+      walkInM: Math.round(o.walkIn), walkOutM: Math.round(o.walkOut), access: o.bikeIn ? 'ubike' : 'walk', egress: o.bikeOut ? 'ubike' : 'walk',
       rides: o.rides.map(r => ({ route: r.label, kind: routeKindOf(r), rideS: Math.round(r.sec), from: stop(r.stops[0]), to: stop(r.stops[r.stops.length - 1]), stops: r.stops.length - 1,
-        geometry: simplify((legCoordsOf(r) || []).map(([x, y]) => ll(x, y)), 3) })) })) };
+        lineId: routeKindOf(r) === 'metro' && b.routeKeys ? String(b.routeKeys[r.rid]).replace(/^MRT-/, '') : undefined,
+        geometry: simplify((legCoordsOf(r) || []).map(([x, y]) => ll(x, y)), 3) })),
+      // 新增（不影響原有欄位）：完整分段——WALK／BUS_RIDE／METRO_RIDE／TRANSFER，每段附時間、距離與資料來源
+      legs: legsOf(o).map(l => ({ type: l.type, ...(l.type.endsWith('_RIDE') ? { route: l.route, lineId: l.lineId, from: stop(l.from), to: stop(l.to), stops: l.stops, rideS: l.rideS, waitS: Math.round(l.waitS), estimate: l.estimate, source: l.src, ...(l.fare ? { fare: { adultSingle: l.fare.single, adultCard: l.fare.card, currency: 'TWD', source: 'TDX Metro/ODFare' } } : {}) }
+        : l.type === 'BIKE' ? { from: ybOut(l.from), to: ybOut(l.to), bikeM: l.m, durationS: l.sec, rideS: l.rideS, estimate: true, source: l.src, geometry: simplify(l.path.map(([x, y]) => ll(x, y)), 3) }
+        : { from: typeof l.from === 'number' ? stop(l.from) : ybOut(l.from), to: typeof l.to === 'number' ? stop(l.to) : ybOut(l.to), walkM: l.m, durationS: l.sec, ...(l.type === 'TRANSFER' ? { source: l.src, sameStop: l.sameStop } : { note: l.note || undefined }) }) })) })) };
 }
 
 // ---------- 多運具比較：每種交通方式取最快的一條 ----------

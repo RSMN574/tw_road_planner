@@ -1,12 +1,13 @@
 // bus-planner 掛在 server_2（Express）裡的整合測試：在 server_2 根目錄執行
 //   node bus-planner/test/server2-mount.mjs
 // 檢查：原本的路由行為不變、/bus-planner/ 底下的網頁／資料／API／TDX 代理都正常、bus-planner 的請求不吃掉原本的限流額度與 body
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-const HERE = path.dirname(new URL(import.meta.url).pathname), APP = path.resolve(HERE, '../../app.js');
+const HERE = path.dirname(fileURLToPath(import.meta.url)), APP = path.resolve(HERE, '../../app.js');
 if (!existsSync(APP)) { console.log('略過：這個測試要放在 server_2 裡（找不到 ../../app.js）'); process.exit(0); }
 const log0 = console.log; console.info = () => {};
 let fails = 0; const ok = (n, c, x = '') => { log0((c ? '  ✓ ' : '  ✗ ') + n + (x ? '｜' + x : '')); if (!c) fails++; };

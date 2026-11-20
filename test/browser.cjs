@@ -58,11 +58,32 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const dist0 = await page.evaluate(() => document.getElementById('navDist').textContent); ok('頂部顯示下一個轉彎距離', /公(尺|里)/.test(dist0), dist0 + ' ' + await page.evaluate(() => document.getElementById('navRoad').textContent));
     const rem0 = await page.evaluate(() => document.getElementById('navRem').textContent);
     // 跟隨移動時只平移已畫好的場景（同一個 <g id="scene">），不重畫整張地圖；箭頭在場景外、每幀更新
+    //（自動縮放：起步時鏡頭會先拉到適合車速的距離，縮放累積超過 2 倍時才完整重畫一次；所以先以固定車速開幾秒，等鏡頭穩定再量）
+    const fixAt = async s => { const [x, y] = posAlong(L1, s), [lo, la] = ll(x, y); await ctx.setGeolocation({ latitude: la, longitude: lo, accuracy: 12 }); await wait(1050); };
+    for (const s of [14, 28, 42, 56, 70]) await fixAt(s);
     await page.evaluate(() => { const g = document.getElementById('scene'); if (g) g.dataset.mark = '1'; });
-    for (const s of [40, 80]) { const [x, y] = posAlong(L1, s), [lo, la] = ll(x, y); await ctx.setGeolocation({ latitude: la, longitude: lo, accuracy: 12 }); await wait(1300); }
+    for (const s of [84, 98, 112, 126]) await fixAt(s);
     const sc = await page.evaluate(() => { const g = document.getElementById('scene'), m = document.getElementById('navMarker'); return { same: !!(g && g.dataset.mark === '1'), tf: g && g.getAttribute('transform'), marker: !!m, markerOutside: !!(m && m.parentNode && m.parentNode.id !== 'scene') }; });
     ok('跟隨移動：只平移場景，不整張重畫', sc.same && /translate|matrix/.test(sc.tf || ''), JSON.stringify(sc));
     ok('GPS 箭頭畫在場景之外（每幀更新位置）', sc.marker && sc.markerOutside);
+    // 車頭朝上＋傾斜：場景旋轉、地圖層有 3D 傾斜；截圖檢查四個角落沒有露出空白（傾斜後的梯形要蓋滿畫面）
+    const cam = await page.evaluate(() => ({ rot: /rotate\(/.test(document.getElementById('scene').getAttribute('transform') || ''), tilt: getComputedStyle(document.getElementById('routeSvg')).transform, orient: document.getElementById('navOrient').textContent }));
+    ok('車頭朝上：地圖依行進方向旋轉', cam.rot, cam.orient);
+    ok('行進中傾斜視角（CSS 3D）', cam.tilt && cam.tilt !== 'none', cam.tilt.slice(0, 40));
+    await page.screenshot({ path: '/tmp/e2e-nav-tilt.png' });
+    const corners = await page.evaluate(() => { const r = document.getElementById('map') ? document.getElementById('map').getBoundingClientRect() : document.getElementById('routeSvg').parentNode.getBoundingClientRect(), pts = [[r.left + 3, r.top + 3], [r.right - 3, r.top + 3], [r.left + 3, r.bottom - 3], [r.right - 3, r.bottom - 3]];
+      return pts.map(([x, y]) => { const e = document.elementFromPoint(x, y); return e ? (e.closest('#routeSvg') ? 'map' : e.closest('#navUI,#navOverlay') ? 'ui' : e.tagName + '#' + e.id) : 'none'; }); });
+    ok('傾斜後畫面四角仍是地圖或介面（沒有空白）', corners.every(c => c === 'map' || c === 'ui'), corners.join(','));
+    // 手動拖曳：停止跟隨、傾斜放平、出現「回到定位」；按下後恢復跟隨
+    const box = await page.evaluate(() => { const r = document.getElementById('routeSvg').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.4 }; });
+    await page.touchscreen.tap(box.x, box.y).catch(() => {});
+    await page.dispatchEvent('#routeSvg', 'touchstart', {}).catch(() => {});
+    await page.mouse.move(box.x, box.y); await page.mouse.down(); for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + i * 12, box.y + i * 8); await page.mouse.up(); await wait(300);
+    const dr = await page.evaluate(() => ({ recenter: !document.getElementById('navRecenter').hidden, tilt: document.getElementById('routeSvg').style.transform }));
+    ok('手動拖曳：停止跟隨（出現「回到定位」）、傾斜立即放平', dr.recenter && !dr.tilt, JSON.stringify(dr));
+    await page.click('#navRecenter'); for (const s2 of [140, 154]) await fixAt(s2);
+    const rc = await page.evaluate(() => ({ recenter: !document.getElementById('navRecenter').hidden, tilt: getComputedStyle(document.getElementById('routeSvg')).transform }));
+    ok('按「回到定位」：恢復跟隨與傾斜', !rc.recenter && rc.tilt !== 'none', JSON.stringify(rc).slice(0, 80));
     // 用實際路線判斷走哪個 L 形：看一步之後的偏離狀態
     await follow(L1); await wait(500);
     const st = await page.evaluate(() => ({ dist: document.getElementById('navDist').textContent, rem: document.getElementById('navRem').textContent, eta: document.getElementById('navEta').textContent, spoken: window.__spoken.slice(), msg: document.getElementById('navArrow').textContent }));

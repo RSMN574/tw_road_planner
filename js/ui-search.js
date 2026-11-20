@@ -3,6 +3,8 @@ import { State } from './state.js';
 import { findNearestNode, parseCoordInput } from './graph-core.js';
 import { lonLatToWorld } from './geo.js';
 import { showStatus } from './ui-panels.js';
+import { osmHwLabel, osmNameFor, osmOn, osmPoint, osmSearch } from './osm.js';
+import { esc } from './util.js';
 
 export function setupSearch(inputId, resultId, onPick) {
   const input = document.getElementById(inputId);
@@ -44,6 +46,22 @@ export function setupSearch(inputId, resultId, onPick) {
       return;
     }
     if (q.length < 1) return;                       // ← 中文 1 字也能搜
+
+    if (osmOn()) {                                   // 全台 OSM：問伺服器（同名道路依離地圖中心的距離排序）
+      State.searchTimer = setTimeout(async () => {
+        const my = (State.searchSeq = (State.searchSeq || 0) + 1);
+        let hits; try { hits = await osmSearch(q); } catch (e) { if (my === State.searchSeq) result.innerHTML = `<div style="color:#dc2626">⚠ 搜尋失敗：${esc(e.message)}</div>`; return; }
+        if (my !== State.searchSeq || input.value.trim() !== q) return;
+        result.innerHTML = hits.length ? '' : `<div style="color:#94a3b8">全台 OSM 道路沒有符合「${esc(q)}」的路名</div>`;
+        for (const h of hits) {
+          const div = document.createElement('div');
+          div.innerHTML = `${esc(h.name)} <small style="color:#64748b">${esc(osmHwLabel(h.highway))}${h.km || h.km === 0 ? `・${h.km} km` : ''}</small>`;
+          div.onclick = () => { input.value = h.name; result.innerHTML = ''; const which = whichOf(inputId), p = osmPoint(h.lon, h.lat, h.name); setPoint(p, which); osmNameFor(p, which === 'from' ? 'fromInfo' : 'toInfo'); };
+          result.appendChild(div);
+        }
+      }, 250);
+      return;
+    }
 
     if (State.roadNames.length === 0) {
       const div = document.createElement('div');
@@ -90,6 +108,10 @@ export function setupSearch(inputId, resultId, onPick) {
 export function whichOf(inputId) { return inputId === 'from' ? 'from' : 'to'; }
 
 export function locateCoordinate(c, which) {
+  if (osmOn() && c.ll) {                                                       // 全台 OSM：直接用這個經緯度（規劃時伺服器會吸附到最近的可用道路）
+    const p = osmPoint(c.lon, c.lat, `座標 ${c.lat}, ${c.lon}`); setPoint(p, which); osmNameFor(p, which === 'from' ? 'fromInfo' : 'toInfo');
+    showStatus(`📍 已設定${which === 'from' ? '起點' : '終點'}：${c.lat}, ${c.lon}`, 'success'); return;
+  }
   const [wx, wy] = c.ll ? lonLatToWorld(c.lon, c.lat) : [c.lon, c.lat];      // 經緯度 → 路網座標（TWD97 路網要先轉換）
   const idx = findNearestNode(wx, wy);
   if (idx < 0) { showStatus('⚠ 坐标附近找不到路网节点', 'error'); return; }

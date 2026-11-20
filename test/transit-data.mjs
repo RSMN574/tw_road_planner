@@ -53,7 +53,7 @@ ok('班距依時段、依星期', M('TMRT-G|0').freqs.length === 4 && M('TMRT-B|
 ok('首末班車依終點分到正確方向', M('TMRT-G|0').firstLast[0][0].first === 21600 && M('TMRT-G|0').firstLast[0][0].last === 86400 && M('TMRT-G|1').firstLast[0][0].last === 85800 && M('TMRT-G|1').firstLast[2][0].last === 86100 && M('TMRT-G|0').firstLast[4].length === 0);
 ok('站內轉乘與出入口保留原始時間與座標', metro.transfers.length === 2 && metro.transfers[0].sec === 240 && metro.transfers[0].onSite === true && metro.exits.length === 2 && metro.exits[0].station === 'TMRT-G1');
 const m0 = buildMetro({ station: mraw.station, stationOfLine: mraw.stationOfLine }, { operator: 'TMRT' });
-ok('缺少的資料種類會明講', m0.missing.length === 5 && m0.warnings.some(w => w.includes('缺少資料')) && m0.patterns.every(p => p.runEstimated > 0 && !p.freqs.length));
+ok('缺少的資料種類會明講（TMRT 本來就沒有 LineTransfer，不算缺）', m0.missing.length === 4 && !m0.missing.some(x => x.includes('LineTransfer')) && buildMetro({ station: mraw.station, stationOfLine: mraw.stationOfLine }, { operator: 'TRTC' }).missing.length === 5 && m0.warnings.some(w => w.includes('缺少資料')) && m0.patterns.every(p => p.runEstimated > 0 && !p.freqs.length));
 
 console.log('— 班次表（TimetableStore）');
 const store = createStore({ bus, metros: [metro] }), pi = id => store.patterns.findIndex(p => p.id === id);
@@ -105,7 +105,8 @@ const fakeFetch = async p => { calls.push(p); const d = list.find(x => x.path ==
 const td = createTransitData({ dir, fetchJson: fakeFetch, now: () => clock });
 ok('一開始沒有資料', td.load() === null && td.status().version === null);
 const r1 = await td.refresh();
-ok('第一次同步：抓全部並建立資料庫', calls.length === list.length && r1.changed === 12 && td.store.stats.patterns === 13 && r1.report.find(x => x.name === 'metro.TMRT.stationOfRoute').action === 'failed');
+const avail = list.filter(d => (d.group === 'bus' ? true : mraw[d.key] != null)).length;   // 有資料的種類（捷運 stationOfRoute、ODFare 在測試資料裡沒有 → 404）
+ok('第一次同步：抓全部並建立資料庫', calls.length === list.length && r1.changed === avail && td.store.stats.patterns === 13 && r1.report.find(x => x.name === 'metro.TMRT.stationOfRoute').action === 'failed');
 const ver1 = td.store.version; calls = []; await td.refresh();
 ok('未到期：不重抓', calls.length === 0);
 clock += 7 * 3600e3; calls = []; const r3 = await td.refresh();
@@ -121,4 +122,18 @@ let tokCalls = 0; const fj = createTdxFetcher({ upstream: 'http://x', getToken: 
   fetchImpl: async (u, o) => o.headers.Authorization === 'Bearer good' ? { status: 200, text: async () => '[{"a":1}]' } : { status: 401, text: async () => '' } });
 const fr = await fj('/Bus/x');
 ok('token 過期（401）會換新 token 重試', fr.status === 200 && fr.data[0].a === 1 && tokCalls === 2);
+ok('台中捷運（TMRT）不再請求 LineTransfer（TDX 只接受 TRTC、KRTC、TYMC、NTMC）；台北捷運照常', !list.some(d => d.name === 'metro.TMRT.lineTransfer') && datasetList('Taipei', ['TRTC']).some(d => d.name === 'metro.TRTC.lineTransfer'));
+ok('捷運票價 ODFare 列入同步清單（選用、每週更新）', list.some(d => d.name === 'metro.TMRT.odFare' && d.optional && d.path.includes('/Rail/Metro/ODFare/TMRT')));
+{ // 429 限流：依 Retry-After 等待後重試；請求之間保持間隔
+  const waits = [], seq = [429, 429, 200]; let n = 0;
+  const f429 = createTdxFetcher({ upstream: 'http://x', getToken: async () => 't', minGapMs: 0, wait: async ms => { waits.push(ms); },
+    fetchImpl: async () => { const st = seq[Math.min(n++, seq.length - 1)]; return { status: st, headers: { get: k => (k === 'retry-after' && st === 429 ? (n === 1 ? '3' : null) : null) }, text: async () => (st === 200 ? '[{"ok":1}]' : '{"message":"API rate limit exceeded"}') }; } });
+  const r = await f429('/Rail/Metro/S2STravelTime/TMRT');
+  ok('429 → 依 Retry-After（3 秒）、再指數退避（4 秒）重試，最後成功', r.status === 200 && r.data[0].ok === 1 && waits[0] === 3000 && waits[1] === 4000, waits.join('、'));
+  let m = 0; const fAlways = createTdxFetcher({ upstream: 'http://x', getToken: async () => 't', minGapMs: 0, retries: 2, wait: async () => {}, fetchImpl: async () => { m++; return { status: 429, headers: { get: () => null }, text: async () => 'limit' }; } });
+  const r2 = await fAlways('/x'); ok('一直 429：重試上限後回報失敗（不無限重試）', r2.status === 429 && m === 3 && r2.retried === 2);
+  const gaps = [], fGap = createTdxFetcher({ upstream: 'http://x', getToken: async () => 't', minGapMs: 800, wait: async ms => { gaps.push(ms); }, fetchImpl: async () => ({ status: 200, text: async () => '[]' }) });
+  await Promise.all([fGap('/a'), fGap('/b'), fGap('/c')]);
+  ok('連續請求之間保持間隔（避免觸發限流）', gaps.length === 2 && gaps.every(g => g > 700 && g <= 800), gaps.map(g => Math.round(g)).join('、'));
+}
 done();
