@@ -555,7 +555,9 @@ npm run test:v111        # 這一版新增的測試（也已加入 npm test）
 - 交通方式選「大眾運輸」時改用伺服器的 `GET /api/v1/transit/plan`（`from`、`to`、`depart`、`modes=bus,metro,lrt,tra,thsr`、`maxWalk`、`maxTransfers`）：RAPTOR，有時刻表的依班次（時間相依），捷運／輕軌有站別時刻表用實際發車時刻、只有班距的用班距推估並標示；起終點與轉乘的步行在 OSM 步行路網上實際走（不是直線）；TDX 的站內轉乘時間與共站優先；**不依站名合併車站**。
 - 輸出最快、最少轉乘、最少步行、最便宜（每段都有票價時）、建議；每段有運具、上下車站、方向、車次、發車／抵達、等候、轉乘、步行距離、票價（台鐵票種依原始資料，不猜哪一種是全票）、軌道線型（GIS 圖資 v3 的 WKT）。台鐵即時誤點（LiveTrainDelay）會計入。
 - 網頁：方案清單、每段明細、地圖依運具上色（步行虛線）。
-- **限制**：這個開發環境沒有 TDX 金鑰（訪客模式不能用 GIS 圖資、每日 20 次），所以軌道整合只用依 OAS 欄位做的**模擬資料**測過（`test/transit-rail.mjs`、`node test/make-transit-cache.mjs` 可產生模擬快取給伺服器用）；真實資料要在有金鑰的環境執行 `transit-sync` 後驗證。
+- **真實資料驗證（2026-11-24）**：台鐵 245 站 1,859 班、高鐵 369 班、8 個捷運輕軌系統、台北公車 28,823 站牌；台中車站→淡水（自強 110 次轉淡水信義線，NT$550）、台北→左營（高鐵 0117 次）等實際規劃 15～150 ms。實際回應與 OAS 不一致的地方（道路事件的陣列鍵、MULTIPOLYGON、台鐵票種）已修正，見報告第 12 節。
+- 金鑰：`.env` 設 `TDX_TOKEN_URL`＋`TDX_API_KEY`（＋`TDX_TS`），或 `TDX_CLIENT_ID`＋`TDX_CLIENT_SECRET`（直接向 TDX 官方取 token）；`--operators TRA,THSR` 這種逗號清單在 PowerShell 不用加引號。
+- 伺服器啟動時預先建立轉乘（全台約 16 秒、記憶體含 OSM 圖約 1.6 GB）；`.env` 的 `TRANSIT_CITY`、`TRANSIT_METRO`、`TRANSIT_RAIL` 要和同步時的參數一致。
 
 ### 導航
 - 路線上的位置改用 HMM（`js/hmm-match.js`）：路線靠近自己（分隔道路去回、繞圈）時，低速沒有 GPS 方向的情況下，舊方法有 8～9% 的定位對到另一側，HMM 是 0%；導航引擎中低速情境的進度最大誤差 45 → 22 m（模擬資料，`test/nav-hmm.mjs`）。HMM 找不到候選時退回舊方法，偏航判斷不變。

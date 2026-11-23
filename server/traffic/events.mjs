@@ -43,7 +43,12 @@ export function normalizeEvent(e, { kind = 'live', wrapper = {} } = {}) {
     occur: dur.OccurType != null ? { type: dur.OccurType, days: dur.OccurDays || null, dates: dur.OccurDates || null, start: dur.StartTime || null, end: dur.EndTime || null } : null,
     detour: imp.Detour ? { description: imp.Detour.Description || '', geometry: parseWkt(imp.Detour.Geometry) } : null, confidence, updatedAt: Number.isFinite(upd) ? upd : null };
 }
-export function normalizeWrapper(w, kind) { const items = (w && (w.Items || w.items)) || (Array.isArray(w) ? w : []); return items.map(e => normalizeEvent(e, { kind, wrapper: w || {} })); }
+// 實測（2026-11-24）：TDX 回應的陣列鍵是 LiveEvents（即時）／Events（預告），不是 OAS 寫的 Items；同一個 EventID 會重複出現 → 依 EventID＋EventStep 去重
+export function normalizeWrapper(w, kind) {
+  const items = (w && (w.LiveEvents || w.Events || w.Items || w.items)) || (Array.isArray(w) ? w : []), seen = new Set(), out = [];
+  for (const e of items) { const k = String(e.EventID) + '|' + (e.EventStep ?? ''); if (seen.has(k)) continue; seen.add(k); out.push(normalizeEvent(e, { kind, wrapper: w || {} })); }
+  return out;
+}
 // 事件在 ms 這個時刻是否有效（有開始／結束時間就照時間；預告性事件的 Daily／Weekdays 依 OccurType 判斷時段）
 export function eventActive(ev, ms) {
   if (ev.startTime != null && ms < ev.startTime) return false; if (ev.endTime != null && ms > ev.endTime) return false;
@@ -65,10 +70,11 @@ export function impactOf(ev) {
 }
 const nameMatch = (a, b) => !!a && !!b && (a.includes(b) || b.includes(a) || a.replace(/[臺]/g, '台').includes(b.replace(/[臺]/g, '台')));
 // 事件 → 有向邊的 overlay：點事件找 60 m 內、線事件找 30 m 內的路段；有路名時路名要對得上（台＝臺），沒有路名的只收 15 m 內最近的路
+// at＝null：不看時間（全部對應，給 mapEvents 快取用）
 export function buildOverlay(events, router, { at = Date.now(), modes = null } = {}) {
   const ov = new Map(), hits = [], skipped = { inactive: 0, noGeometry: 0, noRoad: 0, noImpact: 0 }, { E, W } = router.g;
   for (const ev of events) {
-    const act = eventActive(ev, at); if (act === false) { skipped.inactive++; continue; }
+    if (at != null && eventActive(ev, at) === false) { skipped.inactive++; continue; }
     if (!ev.geometry) { skipped.noGeometry++; continue; }
     const imp = impactOf(ev); if (!imp) { skipped.noImpact++; continue; }
     const pts = ev.geometry.flat(), point = pts.length === 1, rad = point ? 60 : 30, roads = ev.affectedRoad.map(r => r.road);
@@ -89,7 +95,19 @@ export function buildOverlay(events, router, { at = Date.now(), modes = null } =
       const o = ov.get(a) || { block: false, factor: 1, timeFactor: 1, events: [] };
       o.block = o.block || imp.block; o.factor = Math.max(o.factor, imp.factor); o.timeFactor = Math.max(o.timeFactor, imp.timeFactor); if (!o.events.includes(ev.eventId)) o.events.push(ev.eventId); ov.set(a, o); arcs++;
     }
-    hits.push({ eventId: ev.eventId, arcs, block: imp.block, reason: imp.reason, roads, confidence: ev.confidence });
+    hits.push({ eventId: ev.eventId, arcs, arcList: [...cand.keys()].flatMap(e => [2 * e, 2 * e + 1]).filter(a => { const o = ov.get(a); return o && o.events.includes(ev.eventId); }), impact: imp, block: imp.block, reason: imp.reason, roads, confidence: ev.confidence });
+  }
+  return { overlay: ov, hits, skipped };
+}
+
+// 兩段式（全台實測：對應 3,000 筆事件約 7 秒）：mapEvents 只在事件資料變動時做一次；overlayAt 每分鐘依時間篩選，幾毫秒
+export function mapEvents(events, router) { const b = buildOverlay(events, router, { at: null }); return { hits: b.hits, skipped: b.skipped, byId: new Map(events.map(e => [e.eventId, e])) }; }
+export function overlayAt(mapped, at) {
+  const ov = new Map(), hits = [], skipped = { ...mapped.skipped, inactive: 0 };
+  for (const h of mapped.hits) {
+    if (eventActive(mapped.byId.get(h.eventId), at) === false) { skipped.inactive++; continue; }
+    for (const a of h.arcList) { const o = ov.get(a) || { block: false, factor: 1, timeFactor: 1, events: [] }; o.block = o.block || h.impact.block; o.factor = Math.max(o.factor, h.impact.factor); o.timeFactor = Math.max(o.timeFactor, h.impact.timeFactor); if (!o.events.includes(h.eventId)) o.events.push(h.eventId); ov.set(a, o); }
+    hits.push({ eventId: h.eventId, arcs: h.arcList.length, block: h.block, reason: h.reason, roads: h.roads, confidence: h.confidence });
   }
   return { overlay: ov, hits, skipped };
 }

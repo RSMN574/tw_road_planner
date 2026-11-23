@@ -128,7 +128,7 @@ function finishItinerary(ctx, legs, { date, t0, egress, lastStop, departMs }) {
     const p = store.patterns[l.pi], w = l.depS - t;
     if (w >= 30) { out.push({ type: 'WAIT', at: st(l.fromStop), departAt: iso(date, t), arriveAt: iso(date, l.depS), durationS: Math.round(w) }); waitS += w; }
     const stops = []; for (let i = l.bpos; i <= l.apos; i++) stops.push(st(p.stopIdx[i]));
-    const fare = ctx.fareOf ? ctx.fareOf(p, store.stops[l.fromStop], store.stops[l.toStop]) : null; if (fare && Number.isFinite(fare.price)) { fareTotal += fare.price; fares.push(fare); } else fareOk = false;
+    const fare = ctx.fareOf ? ctx.fareOf(p, store.stops[l.fromStop], store.stops[l.toStop], l.timing) : null; if (fare && Number.isFinite(fare.price)) { fareTotal += fare.price; fares.push(fare); } else fareOk = false;
     if (l.timing.estimated) notes.add(l.timing.kind === 'frequency' ? `${MODE_LABEL[p.mode]}${p.name ? ' ' + p.name : ''}：沒有時刻表，候車時間依班距推估` : `${MODE_LABEL[p.mode]}${p.name ? ' ' + p.name : ''}：部分站間時間是推估`);
     if (l.timing.dayUncertain) notes.add(`${MODE_LABEL[p.mode]}${p.name ? ' ' + p.name : ''}：資料沒有註明適用星期`);
     if (l.timing.delayMin) notes.add(`台鐵 ${l.trainNo} 次即時誤點 ${l.timing.delayMin} 分（已計入）`);
@@ -168,7 +168,11 @@ export function planTransit(ctx, q) {
   // 合併、去重；Pareto（抵達 × 轉乘 × 步行）
   const all = new Map(); for (const it of [...main.its, ...lessWalk.its]) if (!all.has(it._key)) all.set(it._key, it);
   let list = [...all.values()];
-  list = list.filter(a => !list.some(b => b !== a && b.arriveAt <= a.arriveAt && b.transfers <= a.transfers && b.walkM <= a.walkM && (b.arriveAt < a.arriveAt || b.transfers < a.transfers || b.walkM < a.walkM)));
+  // 去掉繞回同一站的方案（例如搭出去再搭回來只為了少走幾步，實測資料會出現），再取 Pareto：步行少不到 300 m 不算「比較好」
+  const loops = it => { const seen = new Set(); for (const l of it.legs) if (l.type.endsWith('_RIDE')) { for (const s of [l.from.uid, l.to.uid]) { if (seen.has(s) && s !== l.from.uid) return true; } seen.add(l.from.uid); seen.add(l.to.uid); } return false; };
+  list = list.filter(it => !loops(it));
+  const WALK_TOL = 300, dom = (b, a) => b.arriveAt <= a.arriveAt && b.transfers <= a.transfers && b.walkM <= a.walkM + WALK_TOL && (b.arriveAt < a.arriveAt || b.transfers < a.transfers || b.walkM < a.walkM - WALK_TOL);
+  list = list.filter(a => !list.some(b => b !== a && dom(b, a)));
   const tag = (name, fn) => { if (!list.length) return; const b = list.reduce((x, y) => (fn(y) < fn(x) ? y : x)); (b.tags ||= []).push(name); };
   const arr = it => Date.parse(it.arriveAt);
   tag('fastest', it => arr(it)); tag('fewestTransfers', it => it.transfers * 1e10 + arr(it)); const fast = list.length ? Math.min(...list.map(arr)) : 0;

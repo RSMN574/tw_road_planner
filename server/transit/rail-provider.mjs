@@ -18,9 +18,11 @@ export const LRT_OPS = new Set(['KLRT', 'NTDLRT', 'NTALRT']);
 export const metroModeOf = op => (LRT_OPS.has(op) ? 'lrt' : 'metro');
 
 // ---------- WKT（GIS 圖資的 Geometry 欄位）----------
-// 支援 POINT、LINESTRING、MULTILINESTRING（可有 SRID=4326; 前綴）；回傳 [[[lon, lat], …], …]（多條線）或 null
+// 支援 POINT、MULTIPOINT、LINESTRING、MULTILINESTRING、POLYGON、MULTIPOLYGON（多邊形回傳外框線；可有 SRID=4326; 前綴）；回傳 [[[lon, lat], …], …] 或 null
+// （TDX 道路事件實測：Positions 是 POINT(...)、預告性事件的 Geometry 是 MULTIPOLYGON）
 export function parseWkt(s) {
-  if (typeof s !== 'string') return null; const t = s.replace(/^SRID=\d+;/i, '').trim(), m = /^(POINT|LINESTRING|MULTILINESTRING)\s*(?:Z|M|ZM)?\s*\((.*)\)\s*$/is.exec(t); if (!m) return null;
+  if (typeof s !== 'string') return null; const t = s.replace(/^SRID=\d+;/i, '').trim(), m = /^(POINT|MULTIPOINT|LINESTRING|MULTILINESTRING|POLYGON|MULTIPOLYGON)\s*(?:Z|M|ZM)?\s*\((.*)\)\s*$/is.exec(t); if (!m) return null;
+  if (/^MULTIPOINT$/i.test(m[1])) { const p = m[2].replace(/[()]/g, '').split(',').map(x => x.trim().split(/\s+/).map(Number)).filter(a => a.length >= 2 && a.every(Number.isFinite)).map(a => [a[0], a[1]]); return p.length ? [p] : null; }
   const pts = str => str.split(',').map(p => p.trim().split(/\s+/).map(Number)).filter(a => a.length >= 2 && Number.isFinite(a[0]) && Number.isFinite(a[1])).map(a => [a[0], a[1]]);
   const kind = m[1].toUpperCase();
   if (kind === 'POINT') { const p = pts(m[2]); return p.length ? [p] : null; }

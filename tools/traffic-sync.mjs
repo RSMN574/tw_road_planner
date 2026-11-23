@@ -13,8 +13,9 @@ import { normalizeWrapper } from '../server/traffic/events.mjs';
 // 依 docs/oas/tdx-road-event-v1.json 的 City enum（即時事件比預告性事件多了 Kaohsiung）
 const LIVE_CITIES = ['Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung', 'Keelung', 'MiaoliCounty', 'ChiayiCounty', 'Chiayi', 'PingtungCounty', 'YilanCounty', 'KinmenCounty'];
 const PLAN_CITIES = ['Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Keelung', 'MiaoliCounty', 'ChiayiCounty', 'Chiayi', 'PingtungCounty', 'YilanCounty', 'KinmenCounty'];
-const has = k => process.argv.includes('--' + k), arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
-const tk = resolveToken(); if (!tk.getToken) { console.error('找不到 TDX token：請設定 TOKEN_FILE，或在 .env 設 TDX_TOKEN_URL＋TDX_API_KEY'); process.exit(2); }
+// 參數：--key 值。值可以是「TRA,THSR」或被 PowerShell 拆開的「TRA THSR」（收集到下一個 -- 為止）；--key 後面沒有值 → 用預設值
+const has = k => process.argv.includes('--' + k), arg = (k, d) => { const i = process.argv.indexOf('--' + k); if (i < 0) return d; const v = []; for (let j = i + 1; j < process.argv.length && !process.argv[j].startsWith('--'); j++) v.push(process.argv[j]); const s = v.join(',').split(/[\s,]+/).filter(Boolean).join(','); return s || d; };
+const tk = resolveToken(); if (!tk.getToken) { console.error('找不到 TDX token：在 .env 設 TDX_CLIENT_ID＋TDX_CLIENT_SECRET（TDX 會員中心的 API 金鑰），或設定 TOKEN_FILE、TDX_TOKEN_URL＋TDX_API_KEY'); process.exit(2); }
 const fetchJson = createTdxFetcher({ upstream: tk.cfg.tdx.upstream, getToken: tk.getToken, log: console.log }), want = arg('cities', '') ? arg('cities').split(',') : null;
 const jobs = [['live', '/v1/Traffic/RoadEvent/LiveEvent/Freeway'], ['live', '/v1/Traffic/RoadEvent/LiveEvent/Highway'], ...LIVE_CITIES.filter(c => !want || want.includes(c)).map(c => ['live', `/v1/Traffic/RoadEvent/LiveEvent/City/${c}`])];
 if (!has('live-only')) jobs.push(['planned', '/v1/Traffic/RoadEvent/Event/Highway'], ...PLAN_CITIES.filter(c => !want || want.includes(c)).map(c => ['planned', `/v1/Traffic/RoadEvent/Event/City/${c}`]));

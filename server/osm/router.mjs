@@ -156,7 +156,12 @@ export class OsmRouter {
   }
   // ---- 步行可達範圍（大眾運輸的轉乘與接駁用，v1.11）----
   // 一個點吸附到最近的可步行路段（≤ maxSnapM），回傳 { e, along, L, snapM }；離路網的那一小段以 1.2 m/s 直線計
-  footSnap(lat, lon, maxSnapM = 300, key = 'foot') { const c = this.snapCandidates(lat, lon, key, { windowM: 0, maxM: maxSnapM })[0]; return c ? { e: c.e, along: c.along, L: this.g.E.len[c.e], snapM: c.distM, lat7: c.lat7, lon7: c.lon7 } : null; }
+  // 避開孤立的小區塊（車站內沒接上路網的通道、月台）：優先選所在強連通分量 ≥ 200 個頂點的路段（澎湖等離島本身夠大，不受影響）
+  footSnap(lat, lon, maxSnapM = 300, key = 'foot') {
+    const cs = this.snapCandidates(lat, lon, key, { windowM: 150, maxM: maxSnapM }); if (!cs.length) return null;
+    const C = this.components(key), big = v => C.comp[v] >= 0 && C.size[C.comp[v]] >= 200, c = cs.find(x => big(this.g.E.u[x.e]) || big(this.g.E.v[x.e])) || cs[0];
+    return { e: c.e, along: c.along, L: this.g.E.len[c.e], snapM: c.distM, lat7: c.lat7, lon7: c.lon7, isolated: !(big(this.g.E.u[c.e]) || big(this.g.E.v[c.e])) };
+  }
   // 從 s（footSnap 的結果）出發，在步行路網上做有上限的 Dijkstra（秒）；回傳 { at(snap) → { s, m } | null }
   // 只用「實際的步行路徑」（通行權禁止的不走、障礙物不穿越）；行人不受轉向限制
   footReach(s, { maxS = 900, key = 'foot', walkMps = 1.2 } = {}) {

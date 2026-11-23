@@ -10,8 +10,8 @@ import { HIGHWAYS } from './osm/tags.mjs';
 import { PROFILES, PROFILE_IX, ST, access4 } from './osm/access.mjs';
 import { ApiError } from './http-util.mjs';
 import { readBuildings, buildingTile, SRC as BLD_SRC } from './osm/buildings.mjs';
-import { transitConfigure, transitPlan, transitStatus } from './transit-engine.mjs';
-import { buildOverlay, eventActive } from './traffic/events.mjs';
+import { transitConfigure, transitPlan, transitStatus, transitPrepare } from './transit-engine.mjs';
+import { mapEvents, overlayAt, eventActive } from './traffic/events.mjs';
 
 // ---------- 道路事件（v1.11；tools/traffic-sync.mjs 寫到 CACHE_DIR/traffic/events.json）----------
 let traffic = { events: [], fetchedAt: null, sig: '', injected: false }, ovCache = { key: '', v: null };
@@ -22,11 +22,12 @@ function loadTraffic() {
   try { const j = JSON.parse(readFileSync(f, 'utf8')); traffic = { events: j.events || [], fetchedAt: j.fetchedAt || null, source: j.source || 'TDX', sig: sg, injected: false }; } catch { /* 寫到一半：下次再讀 */ }
   return traffic;
 }
-export function setTrafficEvents(events, fetchedAt = Date.now()) { traffic = { events: events || [], fetchedAt, sig: 'injected', injected: true, source: '測試資料' }; ovCache = { key: '', v: null }; }
+export function setTrafficEvents(events, fetchedAt = Date.now()) { traffic = { events: events || [], fetchedAt, sig: 'injected:' + Date.now(), injected: true, source: '測試資料' }; ovCache = { key: '', v: null }; }
 function trafficOverlay(at) {
   const T = loadTraffic(); if (!T.events.length || !R) return null;
-  const key = T.sig + '|' + Math.floor(at / 60e3) + '|' + info.version; if (ovCache.key === key) return ovCache.v;
-  const b = buildOverlay(T.events, R, { at }); ovCache = { key, v: { ...b, fetchedAt: T.fetchedAt, total: T.events.length, source: T.source } }; return ovCache.v;
+  const mk = T.sig + '|' + info.version; if (!ovCache.mapped || ovCache.mk !== mk) ovCache = { mk, mapped: mapEvents(T.events, R), key: '', v: null };   // 事件位置：資料變了才重算
+  const key = Math.floor(at / 60e3); if (ovCache.key === key) return ovCache.v;
+  const b = overlayAt(ovCache.mapped, at); ovCache.key = key; ovCache.v = { ...b, fetchedAt: T.fetchedAt, total: T.events.length, source: T.source }; return ovCache.v;
 }
 export function osmTrafficEvents(q = {}) {
   need(); const T = loadTraffic(), at = departMs(q.at), o = trafficOverlay(at), hit = new Map((o ? o.hits : []).map(h => [h.eventId, h]));
@@ -73,6 +74,8 @@ export function osmWarmup(modes = []) {
   if (!R) return 0; const t0 = Date.now();
   for (const m of modes) { const k = MODES[m]; if (!k) continue; R.components(k); R.altFor(k); }
   if (modes.length) { R.edgeIndex(); R.turnGeo(); }
+  try { const t = Date.now(), ok = transitPrepare(R); if (ok) console.log(`   大眾運輸轉乘預先建立：${Date.now() - t} ms`); } catch (e) { /* 沒有大眾運輸資料：第一次查詢時回 503 */ }
+  try { loadTraffic(); trafficOverlay(Date.now()); } catch { /* 沒有道路事件 */ }
   return Date.now() - t0;
 }
 const need = () => { if (!R) throw new ApiError(503, 'OSM_NOT_LOADED', info.reason || '伺服器沒有載入 OSM 道路圖'); };
@@ -118,7 +121,7 @@ export function osmRoute(q) {
   const notes = []; if (kinds.length === 1 && bool(alt, true)) notes.push(`直線距離 ${Math.round(crowKm)} km：長距離只提供最快路線（最短距離路線通常繞山路、小路）`);
   if (tov && tov.hits.length) { const used = new Set(out.flatMap(o => (o.events || []).map(x => x.id))); notes.push(`道路事件：${tov.hits.length} 筆有效事件已對應到路網（封閉 ${tov.hits.filter(h => h.block).length} 筆避開、其餘加權）${used.size ? `；路線經過 ${used.size} 筆事件的路段` : ''}`); }
   if (at != null) notes.push(`轉向限制的時段條件依出發時間 ${new Date(at + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ')}（台北）判斷`);
-  return { engine: 'osm', mode, traffic: tov ? { events: tov.total, mapped: tov.hits.length, blocked: tov.hits.filter(h => h.block).length, fetchedAt: tov.fetchedAt ? new Date(tov.fetchedAt).toISOString() : null, source: tov.source, reasons: Object.fromEntries(tov.hits.map(h => [h.eventId, h.reason])) } : null, depart: at != null ? new Date(at).toISOString() : null, data: { dataTimestamp: info.dataTimestamp, builtAt: info.builtAt, source: 'OpenStreetMap（© OpenStreetMap contributors，ODbL）' }, routes: out, notes };
+  return { engine: 'osm', mode, traffic: tov ? { events: tov.total, mapped: tov.hits.length, blocked: tov.hits.filter(h => h.block).length, fetchedAt: tov.fetchedAt ? new Date(tov.fetchedAt).toISOString() : null, source: tov.source, reasons: Object.fromEntries(tov.hits.filter(h => out.some(o => (o.events || []).some(x => x.id === h.eventId))).map(h => [h.eventId, h.reason])) } : null, depart: at != null ? new Date(at).toISOString() : null, data: { dataTimestamp: info.dataTimestamp, builtAt: info.builtAt, source: 'OpenStreetMap（© OpenStreetMap contributors，ODbL）' }, routes: out, notes };
 }
 
 // ---------- 建築圖磚（z 是 512 像素圖磚的層級，≥ 15）----------

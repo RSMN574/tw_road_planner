@@ -15,13 +15,14 @@ import { resolveToken } from './_tdx.mjs';
 import { createTdxFetcher, createTransitData } from '../server/transit/snapshot.mjs';
 import { dateStrOf } from '../server/transit/time.mjs';
 
-const has = k => process.argv.includes('--' + k), arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
+// 參數：--key 值。值可以是「TRA,THSR」或被 PowerShell 拆開的「TRA THSR」（收集到下一個 -- 為止）；--key 後面沒有值 → 用預設值
+const has = k => process.argv.includes('--' + k), arg = (k, d) => { const i = process.argv.indexOf('--' + k); if (i < 0) return d; const v = []; for (let j = i + 1; j < process.argv.length && !process.argv[j].startsWith('--'); j++) v.push(process.argv[j]); const s = v.join(',').split(/[\s,]+/).filter(Boolean).join(','); return s || d; };
 const tk = resolveToken(), dir = path.join(tk.cfg.cacheDir, 'transit');
 const fetchJson = tk.getToken ? createTdxFetcher({ upstream: tk.cfg.tdx.upstream, getToken: tk.getToken, log: console.log }) : null;
 const td = createTransitData({ dir, city: arg('city', 'Taichung'), operators: arg('operators', 'TMRT').split(',').filter(Boolean), rail: arg('rail', '').split(',').filter(Boolean), extras: has('extras'), fetchJson, log: console.log });
 td.load();
 if (!has('offline')) {
-  if (!tk.getToken) { console.error('找不到 TDX token：請設定 TOKEN_FILE，或在 .env 設 TDX_TOKEN_URL＋TDX_API_KEY（或加 --offline 只用現有快取）'); process.exit(2); }
+  if (!tk.getToken) { console.error('找不到 TDX token：在 .env 設 TDX_CLIENT_ID＋TDX_CLIENT_SECRET（TDX 會員中心的 API 金鑰），或設定 TOKEN_FILE、TDX_TOKEN_URL＋TDX_API_KEY（或加 --offline 只用現有快取）'); process.exit(2); }
   const t0 = Date.now(), r = await td.refresh({ force: has('force') });
   for (const x of r.report) console.log(`  ${({ updated: '↻ 已更新', unchanged: '＝ 沒變', fresh: '· 未到期', failed: x.optional ? '△ 抓不到（選用）' : '✗ 抓不到（必要）' })[x.action]}  ${x.name}${x.rows != null ? `（${x.rows} 筆）` : ''}${x.error ? ' — ' + x.error + (x.keptOld ? '；沿用舊資料' : '') : ''}`);
   console.log(`同步完成：${r.changed} 種資料有變動（${Date.now() - t0} ms）\n`);
