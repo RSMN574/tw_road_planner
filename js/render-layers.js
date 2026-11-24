@@ -30,7 +30,7 @@ export function drawArrows(route) {
       ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', '#f59e0b'); ring.setAttribute('stroke-width', '3');
       svg.appendChild(ring);
     }
-    if (s.turnType === 'start' || s.turnType === 'arrive' || !c[s.index + 1]) continue;
+    if (s.turnType === 'start' || s.turnType === 'arrive' || s.turnType === 'waypoint' || !c[s.index + 1]) continue;
     const [x2, y2] = worldToScreen(c[s.index+1][0], c[s.index+1][1]);   // 方向 = v2（以螢幕向量計算，自動處理 y 翻轉與 cos）
     const L = Math.hypot(x2 - x, y2 - y) || 1, ux = (x2 - x) / L, uy = (y2 - y) / L, px = -uy, py = ux;
     const t = document.createElementNS(NS, 'path');

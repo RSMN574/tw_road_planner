@@ -43,6 +43,7 @@ export function stepColor(s) {
 export function stepText(s) {
   if (s.turnType === 'start')  return `起點：從 ${esc(s.roadName || '起點')} 出發`;
   if (s.turnType === 'arrive') return `${fmtDist(s.distanceFromPrev)} 抵達：${esc(s.roadName || '終點')}`;
+  if (s.turnType === 'waypoint') return `${fmtDist(s.distanceFromPrev)} 📍 途經點 ${s.wp || ''}：${esc(s.roadName || '')}`;
   if (s.turnType === 'ferry') return `${fmtDist(s.distanceFromPrev)} ⛴ 搭乘渡輪 ${esc(s.roadName || '')}${s.spd ? ` <small style="color:#64748b">（${esc(s.spd)}）</small>` : ''}`;
   const d = s.dir === 'left' ? '左' : '右';
   const act = { straight: '直行', slight: `微${d}轉`, turn: `${d}轉`, sharp: `急${d}轉`, uturn: '迴轉' }[s.turnType];

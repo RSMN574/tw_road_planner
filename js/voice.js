@@ -8,13 +8,14 @@ export const VoiceTemplates = {
   minutes(s) { const m = Math.max(1, Math.round(s / 60)); return m >= 60 ? `${Math.floor(m / 60)}小時${m % 60 ? (m % 60) + '分鐘' : ''}` : `${m}分鐘`; },
   action(st) {
     if (st.turnType === 'arrive') return '抵達目的地';
+    if (st.turnType === 'waypoint') return `抵達途經點${st.wp ? ' ' + st.wp : ''}`;
     if (st.turnType === 'ferry') return '搭乘渡輪';
     const d = st.dir === 'left' ? '左' : st.dir === 'right' ? '右' : '';
     switch (st.turnType) { case 'uturn': return '迴轉'; case 'sharp': return `向${d || '右'}後方轉彎`; case 'slight': return `稍微向${d || '右'}轉`; case 'turn': return `${d || '右'}轉`; default: return '直行'; }
   },
   road(st) { return st.roadName ? `進入${st.roadName}` : ''; },
-  ahead(st, d) { return st.turnType === 'arrive' ? `前方${this.dist(d)}，即將抵達目的地` : `前方${this.dist(d)}，${this.action(st)}${st.roadName ? '，' + this.road(st) : ''}`; },
-  now(st) { return st.turnType === 'arrive' ? '即將抵達目的地' : `現在${this.action(st)}${st.roadName ? '，' + this.road(st) : ''}`; },
+  ahead(st, d) { if (st.turnType === 'waypoint') return `前方${this.dist(d)}，即將抵達途經點${st.roadName ? '，' + st.roadName : ''}`; return st.turnType === 'arrive' ? `前方${this.dist(d)}，即將抵達目的地` : `前方${this.dist(d)}，${this.action(st)}${st.roadName ? '，' + this.road(st) : ''}`; },
+  now(st) { if (st.turnType === 'waypoint') return `即將抵達途經點${st.roadName ? '，' + st.roadName : ''}`; return st.turnType === 'arrive' ? '即將抵達目的地' : `現在${this.action(st)}${st.roadName ? '，' + this.road(st) : ''}`; },
   start(total, remS, firstRoad) { return `開始導航，${firstRoad ? '沿' + firstRoad + '行駛，' : ''}全程約${this.dist(total)}，預計${this.minutes(remS)}`; },
   offroute: () => '您已偏離路線', rerouting: () => '正在重新規劃路線', rerouted: () => '已重新規劃路線', arrived: () => '您已抵達目的地',
   rerouteFailed: () => '重新規劃失敗，請確認網路或手動調整', gpsLost: () => 'GPS 訊號中斷', gpsBack: () => 'GPS 訊號恢復', backOnRoute: () => '已回到路線上'
@@ -119,6 +120,7 @@ export class AnnouncementManager {
       case 'rerouted': this.detector.reset(); say(VoiceTemplates.rerouted(), 3, 'rerouted'); break;
       case 'reroute-failed': say(VoiceTemplates.rerouteFailed(), 3, 'rr-fail'); break;
       case 'back-on-route': say(VoiceTemplates.backOnRoute(), 2, 'back'); break;
+      case 'step-passed': if (state.passed && state.passed.turnType === 'waypoint') say(`已抵達途經點${state.passed.roadName ? '，' + state.passed.roadName : ''}，繼續前往下一站`, 3, 'wp-' + (state.passed.wp || 0)); break;
       case 'arrived': this.engine.queue.clear(); say(VoiceTemplates.arrived(), 3, 'arrived'); break;
       case 'update': { const a = this.detector.detect(state, PROMPT_PROFILE[this.profileKey], this.scale); if (a) this.engine.speak(a); break; }
     }

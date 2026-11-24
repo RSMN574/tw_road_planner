@@ -24,6 +24,7 @@ export const State = {
   roadNameToNodes: new Map(),
   fromPoint: null,
   toPoint: null,
+  via: [], viaDone: 0, viaPending: false,          // v1.14 途經點（via.js）：清單、導航中已經過幾個、下一個選到的點是否當途經點
   mode: 'from',
   loaded: false,
   edgeIdToNodes: new Map(),

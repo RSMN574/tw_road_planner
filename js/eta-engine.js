@@ -36,7 +36,7 @@ export class EtaModel {
     const useW = sumG > 0 && sumW / sumG >= 0.95 && sumW / sumG <= 1.6;
     this.lenSrc = useW ? '路網邊長' : '路線幾何長度';
     // ② 每段時間、變異；每個節點的路口與轉向延遲
-    const byIdx = new Map(maneuvers.filter(m => m.turnType !== 'start' && m.turnType !== 'arrive').map(m => [m.index, m]));
+    const byIdx = new Map(maneuvers.filter(m => m.turnType !== 'start' && m.turnType !== 'arrive' && m.turnType !== 'waypoint').map(m => [m.index, m]));
     this.realCum = new Float64Array(n); this.cumT = new Float64Array(n); this.cumD = new Float64Array(n); this.cumVar = new Float64Array(n); this.cumSys = new Float64Array(n); this.edgeT = new Float64Array(n - 1);
     let known = 0, hist = 0, turns = 0, junc = 0;
     for (let i = 0; i < n - 1; i++) {

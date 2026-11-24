@@ -52,7 +52,9 @@ const IC_P = {
   phone: 'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z',
   globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z',
   list: 'M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01',
-  flag: 'M6 21V4M6 4h11l-2 4 2 4H6'
+  flag: 'M6 21V4M6 4h11l-2 4 2 4H6',
+  up: 'M12 19V5M6 11l6-6 6 6', down: 'M12 5v14M6 13l6 6 6-6',
+  t_waypoint: 'M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21zM9.5 9.5l2 2 3.5-3.5'
 };
 export function icon(name, size = 24, extra = '') {
   const d = IC_P[name] || IC_P.more;
@@ -61,7 +63,7 @@ export function icon(name, size = 24, extra = '') {
 // 導航步驟 → 轉向圖示名稱
 export function turnIcon(st) {
   if (!st) return 't_straight';
-  if (st.turnType === 'arrive') return 't_arrive'; if (st.turnType === 'ferry') return 't_ferry'; if (st.turnType === 'uturn') return 't_uturn';
+  if (st.turnType === 'arrive') return 't_arrive'; if (st.turnType === 'waypoint') return 't_waypoint'; if (st.turnType === 'ferry') return 't_ferry'; if (st.turnType === 'uturn') return 't_uturn';
   const L = st.dir === 'left'; if (st.turnType === 'sharp') return L ? 't_sharp_left' : 't_sharp_right'; if (st.turnType === 'turn') return L ? 't_left' : 't_right'; if (st.turnType === 'slight') return L ? 't_slight_left' : 't_slight_right';
   return 't_straight';
 }

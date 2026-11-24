@@ -112,26 +112,77 @@ export function departMs(v, now = Date.now()) {
 export function osmRoute(q) {
   need(); const mode = q.mode || 'car', key = MODES[mode];
   if (!key) throw new ApiError(400, 'BAD_MODE', `mode 只能是 ${Object.keys(MODES).filter(m => m !== 'foot').join('、')}`);
-  const from = latLon(q.from, 'from'), to = latLon(q.to, 'to'), heading = q.heading === undefined || q.heading === '' ? null : num(q.heading, 'heading', -360, 720);
+  const from = latLon(q.from, 'from'), to = latLon(q.to, 'to'), via = parseVia(q.via), heading = q.heading === undefined || q.heading === '' ? null : num(q.heading, 'heading', -360, 720);
   const at = bool(q.conditional, true) ? departMs(q.depart) : null;   // conditional=0：不判斷時段（舊行為：有條件的限制一律不套用）
   const tov = bool(q.events, true) ? trafficOverlay(at ?? departMs(q.depart)) : null, overlay = tov && tov.overlay.size ? tov.overlay : null;   // events=0：不考慮道路事件
   // 最短距離：只在直線距離 ≤ 60 km 時另外算（長距離的「最短」幾乎都是繞山路、小路，時間多很多，又要多花 1 秒以上）；alternatives=all 一律算
-  const crowKm = Math.hypot((to[0] - from[0]) * 110.6, (to[1] - from[1]) * 111.3 * Math.cos(from[0] * Math.PI / 180)), alt = String(q.alternatives ?? '1');
+  const pts = [from, ...via, to], crowKm = pts.slice(1).reduce((a, p, i) => a + Math.hypot((p[0] - pts[i][0]) * 110.6, (p[1] - pts[i][1]) * 111.3 * Math.cos(p[0] * Math.PI / 180)), 0), alt = String(q.alternatives ?? '1');
   const kinds = /^(all|2)$/i.test(alt) || (bool(alt, true) && crowKm <= SHORTEST_MAX_KM) ? ['fastest', 'shortest'] : ['fastest'], out = [];
   for (const kind of kinds) {
-    const r = R.route({ from, to, profile: key, metric: kind === 'shortest' ? 'distance' : 'time', heading, at, overlay });
+    const r = via.length ? routeVia(pts, { profile: key, metric: kind === 'shortest' ? 'distance' : 'time', heading, at, overlay }) : R.route({ from, to, profile: key, metric: kind === 'shortest' ? 'distance' : 'time', heading, at, overlay });
     if (r.error) { if (kind === 'fastest') throw new ApiError(r.error === 'NO_NEARBY_ROAD' ? 422 : 404, r.error, r.message, r.snap ? { snap: r.snap } : undefined); continue; }
     if (kind === 'shortest' && out[0] && out[0]._arcs === r.arcs.join(',')) { out[0].alsoShortest = true; continue; }   // 最短＝最快：只回一條
     out.push({ key: kind, label: LABEL[kind], ok: true, distanceM: r.distanceM, durationS: r.durationS, driveS: r.driveS, delayS: r.delayS, estimate: ESTIMATE,
       geometry: r.coords.map(([lo, la]) => [r6(lo), r6(la)]), roads: r.roads, ways: r.ways.map(w => ({ name: w.name, ref: w.ref, highway: w.highway, m: w.m, limitKmh: w.limitKmh, limitSrc: w.limitSrc })),
       steps: bool(q.steps, true) ? r.steps.map(s => ({ ...s, at: s.at ? [r6(s.at[0]), r6(s.at[1])] : undefined })) : undefined,
-      timing: r.timing, signals: r.signals, ferries: r.ferries, warnings: r.warnings, snap: r.snap, conditionalRestrictionsIgnored: r.conditionalRestrictionsIgnored, conditionalRestrictions: r.conditionalRestrictions, events: r.events && r.events.length ? r.events : undefined, _arcs: r.arcs.join(',') });
+      timing: r.timing, legs: r.legs, signals: r.signals, ferries: r.ferries, warnings: r.warnings, snap: r.snap, conditionalRestrictionsIgnored: r.conditionalRestrictionsIgnored, conditionalRestrictions: r.conditionalRestrictions, events: r.events && r.events.length ? r.events : undefined, _arcs: r.arcs.join(',') });
   }
   for (const o of out) delete o._arcs;
   const notes = []; if (kinds.length === 1 && bool(alt, true)) notes.push(`直線距離 ${Math.round(crowKm)} km：長距離只提供最快路線（最短距離路線通常繞山路、小路）`);
   if (tov && tov.hits.length) { const used = new Set(out.flatMap(o => (o.events || []).map(x => x.id))); notes.push(`道路事件：${tov.hits.length} 筆有效事件已對應到路網（封閉 ${tov.hits.filter(h => h.block).length} 筆避開、其餘加權）${used.size ? `；路線經過 ${used.size} 筆事件的路段` : ''}`); }
   if (at != null) notes.push(`轉向限制的時段條件依出發時間 ${new Date(at + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ')}（台北）判斷`);
-  return { engine: 'osm', mode, traffic: tov ? { events: tov.total, mapped: tov.hits.length, blocked: tov.hits.filter(h => h.block).length, fetchedAt: tov.fetchedAt ? new Date(tov.fetchedAt).toISOString() : null, source: tov.source, reasons: Object.fromEntries(tov.hits.filter(h => out.some(o => (o.events || []).some(x => x.id === h.eventId))).map(h => [h.eventId, h.reason])) } : null, depart: at != null ? new Date(at).toISOString() : null, data: { dataTimestamp: info.dataTimestamp, builtAt: info.builtAt, source: 'OpenStreetMap（© OpenStreetMap contributors，ODbL）' }, routes: out, notes };
+  if (via.length) notes.push(`途經 ${via.length} 個地點：分段規劃後接起來（每段各自最快／最短；不含在途經點停留的時間）`);
+  return { engine: 'osm', mode, via: via.length ? via.map(([la, lo]) => [r6(la), r6(lo)]) : undefined, traffic: tov ? { events: tov.total, mapped: tov.hits.length, blocked: tov.hits.filter(h => h.block).length, fetchedAt: tov.fetchedAt ? new Date(tov.fetchedAt).toISOString() : null, source: tov.source, reasons: Object.fromEntries(tov.hits.filter(h => out.some(o => (o.events || []).some(x => x.id === h.eventId))).map(h => [h.eventId, h.reason])) } : null, depart: at != null ? new Date(at).toISOString() : null, data: { dataTimestamp: info.dataTimestamp, builtAt: info.builtAt, source: 'OpenStreetMap（© OpenStreetMap contributors，ODbL）' }, routes: out, notes };
+}
+
+// ---------- 途經點（v1.14）：via=緯度,經度;緯度,經度（最多 MAX_VIA 個）----------
+const MAX_VIA = 5;
+function parseVia(v) {
+  if (v === undefined || v === null || v === '') return [];
+  const parts = (Array.isArray(v) ? v : String(v).split(/[;|]/)).map(x => (typeof x === 'string' ? x.trim() : x)).filter(x => x !== '' && x != null);
+  if (parts.length > MAX_VIA) throw new ApiError(400, 'TOO_MANY_VIA', `途經點最多 ${MAX_VIA} 個`, { got: parts.length });
+  return parts.map((p, i) => latLon(p, `via[${i}]`));
+}
+// 分段規劃 A→V1→…→B，再接成一條：座標、步驟（中間的「抵達」改成「途經點」）、分段時間、經過的道路、渡輪、事件都依序接起來
+// 每一段的出發時間＝前面各段的行駛時間累計（條件式轉向限制、道路事件依那個時間判斷）；heading 只用在第一段
+function routeVia(pts, { profile, metric, heading, at, overlay }) {
+  const legs = []; let t = at;
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const r = R.route({ from: pts[k], to: pts[k + 1], profile, metric, heading: k ? null : heading, at: t, overlay });
+    if (r.error) return { ...r, message: `第 ${k + 1} 段（${k ? '途經點 ' + k : '起點'} → ${k + 2 < pts.length ? '途經點 ' + (k + 1) : '終點'}）：${r.message}` };
+    legs.push(r); if (t != null) t += r.durationS * 1000;
+  }
+  return mergeLegs(legs);
+}
+export function mergeLegs(legs) {
+  const coords = [], steps = [], ways = [], segS = [], segCls = [], segKnown = [], segWay = [], delays = [], ferries = [], ev = new Map(), out = [], warnings = {};
+  let dist = 0, dur = 0, drive = 0, delay = 0, signals = 0;
+  legs.forEach((r, k) => {
+    const T = r.timing, same = coords.length && r.coords.length && Math.abs(coords[coords.length - 1][0] - r.coords[0][0]) < 1e-9 && Math.abs(coords[coords.length - 1][1] - r.coords[0][1]) < 1e-9;
+    const off = coords.length ? (same ? coords.length - 1 : coords.length) : 0, wOff = ways.length;
+    if (coords.length && !same) { segS.push(0); segCls.push(T.segCls[0] ?? 0); segKnown.push(1); segWay.push(wOff); }   // 兩段吸附點不同：補一小段（時間 0）讓分段時間對得上座標
+    coords.push(...(same ? r.coords.slice(1) : r.coords));
+    segS.push(...T.segS); segCls.push(...T.segCls); segKnown.push(...T.segKnown); segWay.push(...T.segWay.map(w => w + wOff));
+    for (const [i, d] of T.delays) delays.push([i + off, d]);
+    ways.push(...r.ways);
+    for (const s of r.steps) {
+      if (k && s.type === 'start') continue;                                   // 第二段起：「出發」併進前一個途經點
+      const st = { ...s, index: s.index + off, fromStartM: s.fromStartM + Math.round(dist) };
+      if (s.type === 'arrive' && k < legs.length - 1) { st.type = 'waypoint'; st.waypoint = k + 1; }
+      steps.push(st);
+    }
+    for (const f of r.ferries) ferries.push({ ...f, fromStartM: f.fromStartM + Math.round(dist) });
+    for (const e of r.events || []) { const h = ev.get(e.id) || { id: e.id, m: 0, extraS: 0 }; h.m += e.m; h.extraS += e.extraS; ev.set(e.id, h); }
+    for (const [w, m] of Object.entries(r.warnings || {})) warnings[w] = (warnings[w] || 0) + m;
+    dist += r.distanceM; dur += r.durationS; drive += r.driveS; delay += r.delayS; signals += r.signals || 0;
+    out.push({ distanceM: r.distanceM, durationS: r.durationS, endIndex: coords.length - 1, snap: r.snap });
+  });
+  const roads = []; for (const w of ways) { const n = w.name || w.ref; if (n && roads[roads.length - 1] !== n) roads.push(n); }
+  const f = legs[0], l = legs[legs.length - 1];
+  return { distanceM: dist, durationS: dur, driveS: drive, delayS: delay, arcs: legs.flatMap(r => r.arcs), coords, ways, roads, steps,
+    timing: { segS, segCls, segKnown, segWay, delays }, ferries, signals, warnings,
+    conditionalRestrictionsIgnored: f.conditionalRestrictionsIgnored, conditionalRestrictions: f.conditionalRestrictions,
+    events: [...ev.values()], legs: out, snap: { ...f.snap, to: l.snap.to, toM: l.snap.toM, via: out.slice(0, -1).map(x => x.snap.to) } };
 }
 
 // ---------- 建築圖磚（z 是 512 像素圖磚的層級，≥ 15）----------

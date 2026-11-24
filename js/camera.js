@@ -35,7 +35,7 @@ export class CameraController {
     const want = this.mode === 'heading' && this.hdg != null ? this.hdg : 0, d = ((want - this.rot + 540) % 360) - 180, maxStep = c.maxRotDps * dt;
     const rot0 = this.rot; this.rot = (this.rot + Math.max(-maxStep, Math.min(maxStep, d * Math.min(1, dt * 4))) + 360) % 360;
     // ② 路口放大狀態
-    const nx = inp.next, turn = nx && !['straight', 'arrive', 'start'].includes(nx.turnType), approach = Math.max(150, v * 12);
+    const nx = inp.next, turn = nx && !['straight', 'arrive', 'start', 'waypoint'].includes(nx.turnType), approach = Math.max(150, v * 12);
     if (this.jn && (!nx || nx.index !== this.jn.idx)) { if (this.jn.passedAt == null) this.jn.passedAt = this.t; if (this.t - this.jn.passedAt > 2.5) { this.doneJn.add(this.jn.idx); this.jn = null; } }
     if (!this.jn && turn && inp.distToNext <= approach && !this.doneJn.has(nx.index)) this.jn = { idx: nx.index, enterAt: this.t, passedAt: null };
     // ③ 目標寬度

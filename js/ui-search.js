@@ -158,6 +158,7 @@ export function pickRoad(name, which) {
 }
 
 export function setPoint(p, which) {
+  if (which === 'to' && State.viaPending && Hooks.addVia) { Hooks.addVia(p); return; }     // v1.14：「新增途經點」之後選到的點
   if (which === 'from') {
     State.fromPoint = p;
     document.getElementById('fromInfo').textContent =

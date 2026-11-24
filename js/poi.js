@@ -156,12 +156,14 @@ function poCardHtml(card, r, d) {
   const web = d && d.website && poSafeUrl(d.website); if (web) rows.push(`<p>${icon('globe', 16)} <a href="${esc(web)}" target="_blank" rel="noopener noreferrer">${esc(web.replace(/^https?:\/\//, '').replace(/\/$/, '').slice(0, 40))}</a></p>`);
   card.innerHTML = `<div class="ds-ev-h"><span class="po-c-title"><b>${esc(poName(r))}</b><small>${esc(r.categoryLabel)}${poDist(r) ? '・' + poDist(r) : ''}${r.nameEn && r.nameEn !== r.name ? '・' + esc(r.nameEn) : ''}</small></span><button type="button" class="ds-icon-btn" data-po-cclose="1" aria-label="關閉">${icon('close', 20)}</button></div>
     ${rows.join('')}<div class="po-c-more">${d ? '' : '<p class="ds-muted">載入詳細資料…</p>'}</div>
-    <div class="po-c-act"><button type="button" class="ds-btn-1" data-po-as="to">${icon('flag', 18)} 設為目的地</button><button type="button" class="ds-btn-2" data-po-as="from">${icon('locate', 18)} 設為起點</button></div>
+    <div class="po-c-act">${State.viaPending ? `<button type="button" class="ds-btn-1" data-po-as="via">${icon('pin', 18)} 加入途經點</button>` : `<button type="button" class="ds-btn-1" data-po-as="to">${icon('flag', 18)} 設為目的地</button>`}<button type="button" class="ds-btn-2" data-po-as="from">${icon('locate', 18)} 設為起點</button></div>
+    ${State.toPoint && !State.viaPending ? `<button type="button" class="ds-btn-2 po-via" data-po-as="via">${icon('pin', 18)} 加入途經點（${(State.via || []).length}/5）</button>` : ''}
     <p class="ds-muted po-src">資料：© OpenStreetMap contributors（ODbL）${d && d.osm ? `・<a href="${esc(d.osm.url)}" target="_blank" rel="noopener noreferrer">在 OSM 查看／修正</a>` : ''}</p>`;
   card.dataset.id = r.id; card._po = r;
 }
 function poSetAs(r, which) {
   if (!r) return; const p = osmPoint(r.lon, r.lat, poName(r)); p.poi = r.id; if (r.address) p.road = r.address;
+  if (which === 'via') { if (Hooks.addVia && Hooks.addVia(p)) { poiClear(); sheetTo('half'); const ti = poId('to'); if (ti) ti.value = State.toPoint ? String(State.toPoint.id).replace(/（.*$/, '') : ''; } return; }
   setPoint(p, which); if (osmOn()) osmNameFor(p, which === 'from' ? 'fromInfo' : 'toInfo');
   const inp = poId(which === 'from' ? 'from' : 'to'); if (inp) inp.value = poName(r);
   poiClear(); if (which === 'to') sheetTo('half'); scheduleRender();

@@ -1,6 +1,6 @@
 # 智慧公車路線規劃系統（bus-planner）
 
-以**道路圖論**為基礎（v1.11.0：全台 OSM 路網＋台鐵／高鐵／捷運／輕軌／公車多運具規劃＋z21 2D／3D 地圖；v1.13.0：店家地點搜尋，見文末），結合**車種規則與速限、道路寬度／型態、YouBike、台中公車與捷運、TDX 即時資料**，在瀏覽器裡完成路線搜尋、公車路線建議與地圖分析。**零依賴、純前端**，沒有後端也沒有 npm 套件。
+以**道路圖論**為基礎（v1.11.0：全台 OSM 路網＋台鐵／高鐵／捷運／輕軌／公車多運具規劃＋z21 2D／3D 地圖；v1.13.0：店家地點搜尋；v1.14.0：途經點、一鍵安裝，見文末），結合**車種規則與速限、道路寬度／型態、YouBike、台中公車與捷運、TDX 即時資料**，在瀏覽器裡完成路線搜尋、公車路線建議與地圖分析。**零依賴、純前端**，沒有後端也沒有 npm 套件。
 
 ## 能做什麼
 
@@ -17,6 +17,19 @@
 - **地圖**：平移縮放、點擊選點／查詢道路、道路寬度圖層、YouBike／公車／捷運圖層、逐步導航。
 
 ## 快速開始
+
+**一鍵安裝**（v1.14）：Windows 雙擊 `install.cmd`；macOS／Linux 執行 `sh install.sh`；已經有 Node.js 也可以 `npm run setup`。
+會依序：檢查 Node.js（沒有時 Windows 詢問後用 winget 安裝 LTS、macOS 有 Homebrew 時詢問後安裝；Linux 列出安裝方式）→ `npm install` → 沒有 `.env` 就從 `.env.example` 建立（已有的不覆蓋）→ 打包網頁 →（詢問）下載台灣 OSM 並建道路圖、地標表、建築、店家地點 →（有 TDX 金鑰時詢問）同步大眾運輸與道路事件 →（詢問）跑測試。
+
+| 選項 | 作用 |
+|---|---|
+| `--yes` | 全部用預設答案（含下載與建立地圖資料；TDX 同步與測試預設不做） |
+| `--no-data` ／ `--data` | 不要／要 下載並建立地圖資料 |
+| `--transit` | 同步 TDX 大眾運輸與道路事件（需要 .env 的金鑰） |
+| `--test` ／ `--start` | 裝好後跑 `npm test` ／ 啟動伺服器 |
+| `--force` | 已有的地圖資料也重新下載、重建 |
+
+已完成的步驟（例如已有道路圖）會略過；任何一步失敗都會停下並印出可以單獨重跑的指令。不是互動式終端機（例如排程）又沒指定選項時，選用步驟一律略過。
 
 ```bash
 npm start            # 打包網頁並啟動伺服器 → 開 http://localhost:8080
@@ -600,3 +613,14 @@ npm run test:v111        # 這一版新增的測試（也已加入 npm test）
 - **測試**：`npm run test:poi`（已加入 `npm test`）：正規化、類別對照、營業時間（跨午夜、即將打烊、看不懂的寫法）、用測試內產生的小型 PBF 跑擷取→檔案→載入→搜尋（同義詞、英文前綴、類別詞、店名＋地標、連鎖店合併、營業中篩選、地圖範圍、附近、詳細資料、面狀地點中心點），以及伺服器 API（主執行緒與背景執行緒、資料檔出現後自動重新載入、錯誤碼、快取）。
 - 修正：地圖 SVG 裡的標記收不到點擊（舊規則讓 `#routeSvg` 的 path／circle 不接收滑鼠）——店家標記與 v1.12 的道路事件標記都受影響，已一併修正。
 - 新增：`server/osm/poi.mjs`、`server/osm/poi-categories.mjs`、`tools/osm/osm-poi.mjs`、`js/poi.js`、`test/poi.mjs`、`docs/design/POI_SEARCH_PLAN.md`；修改：`server/osm-engine.mjs`、`server/backend.mjs`、`server/route-worker.mjs`、`server/server.mjs`、`js/ui-search.js`、`js/ui-shell.js`（搜尋框提示文字）、`js/ui-icons.js`（類別圖示，自繪）、`js/main.js`、`css/app.css`、`package.json`。
+
+## v1.14.0：途經點、一鍵安裝
+
+- **途經點**（`docs/design/POI_SEARCH_PLAN.md` 第二階段）：起點與終點之間最多 5 個。
+  - 新增：規劃區的「＋新增途經點」後搜尋（店家或路名）或點地圖；店家詳細卡有「加入途經點」。可以上下移動、刪除，改了就自動重新規劃；地圖上以紫色編號標記。
+  - 伺服器：`GET /api/v1/osm/route?…&via=緯度,經度;緯度,經度`（POST 也可以用陣列）。分段規劃 A→V1→…→B 再接成一條：座標、逐步指示（中間的「抵達」改成「途經點」步驟）、分段時間、道路、渡輪、道路事件依序接起來；每段的出發時間依前面各段累計（時段轉向限制、道路事件照那個時間判斷）。回應多了 `legs`（每段距離、時間、終點位置）與 `via`。最快／最短各自分段規劃。超過 5 個回 400 `TOO_MANY_VIA`；某一段找不到路時，錯誤訊息會指出是第幾段。
+  - 導航：接近途經點時語音「即將抵達途經點，○○」，通過時「已抵達途經點，繼續前往下一站」，轉向卡顯示途經點名稱；通過途經點不算抵達。偏航重新規劃只帶**還沒經過**的途經點，編號與名稱接續原本的。
+  - 沒有做的：不含在途經點停留的時間；不會自動調整途經點順序（不做最佳化排序）；**大眾運輸模式不支援途經點**（介面會註明，規劃時直接從起點到終點）。
+- **一鍵安裝**：`install.cmd`／`install.ps1`（Windows）、`install.sh`（macOS／Linux）、`tools/setup.mjs`（`npm run setup`），用法見〈快速開始〉。`.gitattributes` 讓 `install.sh` 在 Windows 取出時也保持 LF。
+- **測試**：`npm run test:via`（已加入 `npm test`）：分段合併（座標接點、分段時間、步驟編號、延遲位移、加總）、路線 API 的 via（測試路網：分段、位置、POST 陣列、錯誤碼、指出哪一段失敗）、網頁的規劃與導航（途經點步驟與名稱、依序通過、只抵達一次、偏航重新規劃只帶剩下的、全部經過後不帶）、語音與文字。
+- 新增：`js/via.js`、`tools/setup.mjs`、`install.cmd`、`install.ps1`、`install.sh`、`.gitattributes`、`test/via.mjs`；修改：`server/osm-engine.mjs`、`js/osm.js`、`js/ui-search.js`、`js/poi.js`、導航呈現（`js/nav-ui.js`、`js/voice.js`、`js/camera.js`、`js/eta-engine.js`、`js/render-layers.js`、`js/ui-panels.js`）、`js/ui-icons.js`、`js/state.js`、`js/main.js`、`css/app.css`、`package.json`。

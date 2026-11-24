@@ -103,10 +103,12 @@ export function osmRouteObj(sr, color, label) {
   const coords = sr.geometry.map(([lo, la]) => lonLatToWorld(lo, la)), T = sr.timing || {};
   const route = { coords, _ll: sr.geometry, distance: sr.distanceM, _osm: sr, _plain: true, _color: color, _label: label, _segs: null };
   route._man = (sr.steps || []).map(s => ({ index: Math.min(s.index, coords.length - 1), roadName: s.road || '', turnAngle: s.angle || 0, turnType: s.type, dir: s.dir || '', distanceFromPrev: s.distanceFromPrev || 0,
-    spd: s.type === 'arrive' ? '' : s.type === 'ferry' ? '渡輪（不含候船與班次時間）' : osmSpdText(sr, s.index), xy: coords[Math.min(s.index, coords.length - 1)] }));
+    wp: s.waypoint || 0, spd: s.type === 'arrive' || s.type === 'waypoint' ? '' : s.type === 'ferry' ? '渡輪（不含候船與班次時間）' : osmSpdText(sr, s.index), xy: coords[Math.min(s.index, coords.length - 1)] }));
   route._segKey = i => { const w = T.segWay ? sr.ways[T.segWay[i]] : null; return w ? 'osm:' + w.id : null; };   // 本機歷史速度的鍵（OSM way id）
   return route;
 }
+// 途經點步驟：路名欄放途經點名稱（waypoint 是這次規劃的第幾個；offset＝之前已經過的數量）
+function osmViaNames(sr, offset) { for (const s of sr.steps || []) if (s.type === 'waypoint') { const p = (State.via || [])[offset + s.waypoint - 1]; s.waypoint += offset; if (p) s.road = String(p.name || p.id || '').replace(/（.*$/, ''); } }
 // 路線清單的一筆
 export function osmItem(sr, vk, notes = []) {
   const label = sr.key === 'shortest' ? '最短距離' : sr.alsoShortest ? '最快（也是最短）' : '最快', color = OSM_COLOR[sr.key] || '#2563eb', route = osmRouteObj(sr, color, label);
@@ -129,7 +131,9 @@ export function osmWarnText(sr) {
 // 規劃：回傳 { items, notes }（失敗丟出 Error）
 export async function osmPlan(from, to) {
   const vk = getVehicleKey(), mode = osmModeOf(), [lo1, la1] = osmPtLL(from), [lo2, la2] = osmPtLL(to);
-  const d = await osmGet('route', { from: `${la1.toFixed(6)},${lo1.toFixed(6)}`, to: `${la2.toFixed(6)},${lo2.toFixed(6)}`, mode, alternatives: 1 });
+  State.viaDone = 0; const via = getMode() === 'transit' || !Hooks.viaParam ? undefined : Hooks.viaParam(0);   // v1.14 途經點
+  const d = await osmGet('route', { from: `${la1.toFixed(6)},${lo1.toFixed(6)}`, to: `${la2.toFixed(6)},${lo2.toFixed(6)}`, mode, alternatives: 1, via });
+  for (const sr of d.routes) osmViaNames(sr, 0);
   const notes = d.notes || [];
   return { items: d.routes.map(sr => osmItem(sr, vk === 'bus' ? 'car' : vk)), notes, data: d.data };
 }
@@ -138,7 +142,9 @@ export async function osmReroute(fix, planKey = 'fastest') {
   if (!State.toPoint) return { error: '沒有終點' };
   const [lo2, la2] = osmPtLL(State.toPoint), moving = fix.heading != null && (fix.speed ?? 0) >= 2;
   try {
-    const d = await osmGet('route', { from: `${fix.lat.toFixed(6)},${fix.lon.toFixed(6)}`, to: `${la2.toFixed(6)},${lo2.toFixed(6)}`, mode: osmModeOf(), alternatives: planKey === 'shortest' ? 'all' : 0, heading: moving ? Math.round(fix.heading) : undefined, steps: 1 });
+    const done = State.viaDone || 0, via = Hooks.viaParam ? Hooks.viaParam(done) : undefined;      // 已經過的途經點不再去
+    const d = await osmGet('route', { from: `${fix.lat.toFixed(6)},${fix.lon.toFixed(6)}`, to: `${la2.toFixed(6)},${lo2.toFixed(6)}`, mode: osmModeOf(), alternatives: planKey === 'shortest' ? 'all' : 0, heading: moving ? Math.round(fix.heading) : undefined, steps: 1, via });
+    for (const r of d.routes) osmViaNames(r, done);
     const sr = d.routes.find(r => r.key === planKey) || d.routes[0]; if (!sr) return { error: '找不到從目前位置出發的路線' };
     const it = osmItem(sr, getVehicleKey()); return { route: it.route, item: it };
   } catch (e) { return { error: e.status === 404 || e.status === 422 ? (e.message || '找不到從目前位置出發的路線') : '無法連線伺服器重新規劃（' + e.message + '）' }; }

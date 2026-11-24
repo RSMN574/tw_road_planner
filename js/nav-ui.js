@@ -153,7 +153,7 @@ const uniqNbr = v => { const s = new Set(); for (let k = State.adjOffset[v]; k <
 export function camInteract() { const n = State.nav; if (n && n.cam && n.cam.tilt) { n.cam.interact(); if (State.cam) State.cam.tilt = 0; n.tiltApplied = null; applyTilt(0, n.camOut ? n.camOut.anchorY : 0.62); } }
 
 // ---------- 畫面更新 ----------
-const arrowOf = st => !st ? '⬆' : st.turnType === 'arrive' ? '🏁' : st.turnType === 'ferry' ? '⛴' : st.turnType === 'uturn' ? '↩' : st.turnType === 'sharp' ? (st.dir === 'left' ? '↙' : '↘') : st.turnType === 'turn' ? (st.dir === 'left' ? '⬅' : '➡') : st.turnType === 'slight' ? (st.dir === 'left' ? '↖' : '↗') : '⬆';
+const arrowOf = st => !st ? '⬆' : st.turnType === 'arrive' ? '🏁' : st.turnType === 'waypoint' ? '📍' : st.turnType === 'ferry' ? '⛴' : st.turnType === 'uturn' ? '↩' : st.turnType === 'sharp' ? (st.dir === 'left' ? '↙' : '↘') : st.turnType === 'turn' ? (st.dir === 'left' ? '⬅' : '➡') : st.turnType === 'slight' ? (st.dir === 'left' ? '↖' : '↗') : '⬆';
 const fmtLeft = s => { const m = Math.max(1, Math.round(s / 60)); return m >= 60 ? `${Math.floor(m / 60)} 小時 ${m % 60} 分` : `${m} 分`; };
 function refreshUI() {
   const n = State.nav; if (!n) return; const s = n.state, e = n.engine;
@@ -166,7 +166,7 @@ function refreshUI() {
   const near = { car: 200, heavy: 200, moto: 150, bike: 80, walk: 50 }[n.vk] || 200, nt = gid('navTop');
   if (nt && nt.classList) { nt.classList.toggle('imminent', !msg && !!s.next && s.distToNext <= near); nt.classList.toggle('alert', !!msg && e.status !== 'paused'); }
   setText('navDist', msg || gpsWait || (s.next ? (s.distToNext >= 1000 ? `${(s.distToNext / 1000).toFixed(1)} 公里` : `${Math.round(s.distToNext / 10) * 10 || 10} 公尺`) : '—'));
-  setText('navRoad', msg || !s.next ? '' : s.next.turnType === 'arrive' ? '目的地' : (s.next.roadName ? `進入 ${s.next.roadName}` : VoiceTemplates.action(s.next)));
+  setText('navRoad', msg || !s.next ? '' : s.next.turnType === 'arrive' ? '目的地' : s.next.turnType === 'waypoint' ? `途經點 ${s.next.wp || ''}${s.next.roadName ? '・' + s.next.roadName : ''}` : (s.next.roadName ? `進入 ${s.next.roadName}` : VoiceTemplates.action(s.next)));
   setText('navThen', !msg && s.after ? `接著：${VoiceTemplates.action(s.after)}${s.after.roadName ? '・' + s.after.roadName : ''}` : '');
   setText('navRem', fmtDist(s.remainingM)); refreshTime();
   setText('navPause', e.paused ? '▶ 繼續' : '⏸ 暫停');
@@ -220,7 +220,7 @@ export function startNavigation() {
   State.nav = { engine, gps, voice, follow: true, fix: null, state: null, vk, first: true, rerouteBusy: false, planKey: ['shortest', 'pref'].includes(State.activeKey) ? State.activeKey : 'fastest' };   // 重新規劃沿用出發時選的路線種類
   for (const it of State.routeSet) it.visible = it.key === State.activeKey;                                // 導航中只顯示目前路線
   document.body.classList.add('navigating'); if (typeof CustomEvent !== 'undefined' && document.dispatchEvent) document.dispatchEvent(new CustomEvent('navstate', { detail: 'start' })); gid('navUI').hidden = false; gid('navRecenter').hidden = true; gid('navVoicePanel').hidden = true;
-  engine.on((type, s) => { State.nav.state = engine.state; if (ann) ann.onNav(type, s); if (type === 'reroute-request') requestReroute(s.fix); if (type === 'arrived') toast('已抵達目的地'); if (State.nav && State.nav.trip && (type === 'arrived' || type === 'offroute' || type === 'back-on-route')) State.nav.trip.event(Date.now(), type); if (type !== 'update') scheduleRender(); refreshUI(); });
+  engine.on((type, s) => { State.nav.state = engine.state; if (ann) ann.onNav(type, s); if (type === 'reroute-request') requestReroute(s.fix); if (type === 'arrived') toast('已抵達目的地'); if (type === 'step-passed' && s.passed && s.passed.turnType === 'waypoint') { State.viaDone = Math.max(State.viaDone || 0, s.passed.wp || (State.viaDone || 0) + 1); toast(`已抵達途經點 ${s.passed.wp || ''}${s.passed.roadName ? '：' + s.passed.roadName : ''}`); } if (State.nav && State.nav.trip && (type === 'arrived' || type === 'offroute' || type === 'back-on-route')) State.nav.trip.event(Date.now(), type); if (type !== 'update') scheduleRender(); refreshUI(); });
   const H = hist(), smoother = new EtaSmoother(), vkm = vk0 === 'bus' ? 'car' : vk0;
   State.nav.trip = new TripLog({ vehicle: vkm, routeM: Math.round(route.distance || 0) });
   State.nav.cam = new CameraController({ vk: vkm, mode: settings.orient, tilt: settings.tilt });
