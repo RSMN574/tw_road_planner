@@ -18,6 +18,7 @@ import { Compass } from './compass.js';
 import { AnnouncementManager, PROMPT_PROFILE, VoiceEngine, VoiceTemplates } from './voice.js';
 import { render, renderView, resetView, scheduleRender, worldToScreen } from './render-core.js';
 import { applyBrowseCamera, clampScale } from './map-view.js';
+import { icon, turnIcon } from './ui-icons.js';
 import { drawRoute } from './render-route.js';
 import { showStatus } from './ui-panels.js';
 import { setPoint } from './ui-search.js';
@@ -159,7 +160,11 @@ function refreshUI() {
   if (!s) return;
   const msg = e.status === 'offroute' ? '已偏離路線' : e.status === 'rerouting' ? '正在重新規劃路線…' : e.status === 'arrived' ? '已抵達目的地' : e.status === 'paused' ? '導航已暫停' : '';
   const gpsWait = !n.fix ? '等待 GPS 定位…' : '';
-  setText('navArrow', e.status === 'arrived' ? '🏁' : msg && e.status !== 'paused' ? '⚠' : arrowOf(s.next));
+  // v1.12：自繪轉向圖示；距離轉彎很近時轉向卡放大（車 200 m、機車 150、自行車 80、步行 50）
+  const ic = e.status === 'arrived' ? 't_arrive' : msg && e.status !== 'paused' ? 'warn' : turnIcon(s.next), ae = gid('navArrow');
+  if (ae && ae.dataset && ae.dataset.ic !== ic) { ae.dataset.ic = ic; ae.innerHTML = icon(ic, 48); ae.setAttribute && ae.setAttribute('aria-label', s.next ? VoiceTemplates.action(s.next) : ''); }
+  const near = { car: 200, heavy: 200, moto: 150, bike: 80, walk: 50 }[n.vk] || 200, nt = gid('navTop');
+  if (nt && nt.classList) { nt.classList.toggle('imminent', !msg && !!s.next && s.distToNext <= near); nt.classList.toggle('alert', !!msg && e.status !== 'paused'); }
   setText('navDist', msg || gpsWait || (s.next ? (s.distToNext >= 1000 ? `${(s.distToNext / 1000).toFixed(1)} 公里` : `${Math.round(s.distToNext / 10) * 10 || 10} 公尺`) : '—'));
   setText('navRoad', msg || !s.next ? '' : s.next.turnType === 'arrive' ? '目的地' : (s.next.roadName ? `進入 ${s.next.roadName}` : VoiceTemplates.action(s.next)));
   setText('navThen', !msg && s.after ? `接著：${VoiceTemplates.action(s.after)}${s.after.roadName ? '・' + s.after.roadName : ''}` : '');
@@ -214,7 +219,7 @@ export function startNavigation() {
   const gps = new GpsService(), engine = new NavigationEngine(), V = route._osm ? null : ensureVeh(vk0 === 'bus' ? 'car' : vk0);   // OSM 路線：每段時間由伺服器給（route._osm.timing），不需要本機路網的車種表
   State.nav = { engine, gps, voice, follow: true, fix: null, state: null, vk, first: true, rerouteBusy: false, planKey: ['shortest', 'pref'].includes(State.activeKey) ? State.activeKey : 'fastest' };   // 重新規劃沿用出發時選的路線種類
   for (const it of State.routeSet) it.visible = it.key === State.activeKey;                                // 導航中只顯示目前路線
-  document.body.classList.add('navigating'); gid('navUI').hidden = false; gid('navRecenter').hidden = true; gid('navVoicePanel').hidden = true;
+  document.body.classList.add('navigating'); if (typeof CustomEvent !== 'undefined' && document.dispatchEvent) document.dispatchEvent(new CustomEvent('navstate', { detail: 'start' })); gid('navUI').hidden = false; gid('navRecenter').hidden = true; gid('navVoicePanel').hidden = true;
   engine.on((type, s) => { State.nav.state = engine.state; if (ann) ann.onNav(type, s); if (type === 'reroute-request') requestReroute(s.fix); if (type === 'arrived') toast('已抵達目的地'); if (State.nav && State.nav.trip && (type === 'arrived' || type === 'offroute' || type === 'back-on-route')) State.nav.trip.event(Date.now(), type); if (type !== 'update') scheduleRender(); refreshUI(); });
   const H = hist(), smoother = new EtaSmoother(), vkm = vk0 === 'bus' ? 'car' : vk0;
   State.nav.trip = new TripLog({ vehicle: vkm, routeM: Math.round(route.distance || 0) });
@@ -252,7 +257,7 @@ export function endNavigation() {
   n.engine.stop(); n.gps.stop(); if (voice) { voice.setEnabled(false); voice = null; } ann = null; releaseWakeLock();
   clearInterval(n.tick); if (n.compass) n.compass.stop(); if (edgeHist) edgeHist.save(); State.lastTrip = n.trip; State.cam = null; n.tiltApplied = null; applyTilt(0, 0.62);
   if (n.raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(n.raf);
-  State.nav = null; document.body.classList.remove('navigating'); gid('navUI').hidden = true; rm('navMarker'); applyBrowseCamera(); scheduleRender();   // 回到瀏覽模式的旋轉／3D 設定
+  State.nav = null; document.body.classList.remove('navigating'); if (typeof CustomEvent !== 'undefined' && document.dispatchEvent) document.dispatchEvent(new CustomEvent('navstate', { detail: 'end' })); gid('navUI').hidden = true; rm('navMarker'); applyBrowseCamera(); scheduleRender();   // 回到瀏覽模式的旋轉／3D 設定
 }
 async function acquireWakeLock() { try { if (navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); } } catch { /* 不支援或被拒：導航仍可進行，但螢幕可能自動關閉 */ } }
 function releaseWakeLock() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
@@ -286,6 +291,7 @@ export function init() {
   Object.assign(settings, { voiceOn: navStore.get('voiceOn', true), rate: navStore.get('rate', 1), volume: navStore.get('volume', 1), promptScale: navStore.get('promptScale', 1), smooth: navStore.get('smooth', true), orient: navStore.get('orient', 'heading'), tilt: navStore.get('tilt', true) });
   gid('vOn').checked = settings.voiceOn; gid('vRate').value = settings.rate; gid('vVol').value = settings.volume; gid('vDist').value = String(settings.promptScale); if (gid('navSmooth')) gid('navSmooth').checked = settings.smooth; if (gid('navTilt')) gid('navTilt').checked = settings.tilt; orientLabel();
   gid('startNav').addEventListener('click', startNavigation);
+  const nm = gid('navMore'); if (nm && nm.addEventListener) nm.addEventListener('click', () => { const b = gid('navBottom'); if (b && b.classList) { const v = b.classList.toggle('show-more'); nm.setAttribute('aria-expanded', String(v)); } });
   gid('myLoc').addEventListener('click', useMyLocation);
   gid('navEnd').addEventListener('click', endNavigation);
   gid('navPause').addEventListener('click', () => { const n = State.nav; if (!n) return; if (n.engine.paused) { n.engine.resume(); } else { n.engine.pause(); if (voice) voice._cancel(); } refreshUI(); });

@@ -51,6 +51,11 @@ export function createApp(cfg, opts = {}) {
     // v1.11 全台多運具大眾運輸（台鐵、高鐵、捷運、輕軌、公車；RAPTOR）：出發時間沒給＝現在（換成 1 分鐘一格，快取鍵才正確）
     'GET /api/v1/transit/plan': q => osmCall('transitPlan', q.depart === undefined || q.depart === '' || q.depart === 'now' ? { ...q, depart: String(Math.floor(Date.now() / 60e3) * 60e3) } : q, engine.osmTransitPlan),
     'GET /api/v1/transit/status': () => engine.osmTransitStatus().then(d => ({ data: d })),
+    // v1.13 店家地點（OSM POI）：搜尋、附近、單一地點、類別
+    'GET /api/v1/poi/search': q => osmCall('poiSearch', { ...q, at: String(Math.floor(Date.now() / 60e3) * 60e3) }, engine.osmPoiSearch),
+    'GET /api/v1/poi/nearby': q => osmCall('poiNearby', { ...q, _t: String(Math.floor(Date.now() / 60e3)) }, engine.osmPoiNearby),
+    'GET /api/v1/poi/detail': q => osmCall('poiDetail', { ...q, _t: String(Math.floor(Date.now() / 60e3)) }, engine.osmPoiDetail),
+    'GET /api/v1/poi/categories': q => osmCall('poiCategories', q, engine.osmPoiCategories),
     // v1.11 道路事件（TDX）：列表＋對應到路網的結果；路線 API 預設會避開封閉、加權施工／壅塞（events=0 關閉）
     'GET /api/v1/traffic/events': q => engine.osmTrafficEvents(q).then(d => ({ data: d })),
     'GET /api/v1/osm/search': q => osmCall('search', q, engine.osmSearch),

@@ -1,6 +1,6 @@
 # 智慧公車路線規劃系統（bus-planner）
 
-以**道路圖論**為基礎（v1.11.0：全台 OSM 路網＋台鐵／高鐵／捷運／輕軌／公車多運具規劃＋z21 2D／3D 地圖，見文末），結合**車種規則與速限、道路寬度／型態、YouBike、台中公車與捷運、TDX 即時資料**，在瀏覽器裡完成路線搜尋、公車路線建議與地圖分析。**零依賴、純前端**，沒有後端也沒有 npm 套件。
+以**道路圖論**為基礎（v1.11.0：全台 OSM 路網＋台鐵／高鐵／捷運／輕軌／公車多運具規劃＋z21 2D／3D 地圖；v1.13.0：店家地點搜尋，見文末），結合**車種規則與速限、道路寬度／型態、YouBike、台中公車與捷運、TDX 即時資料**，在瀏覽器裡完成路線搜尋、公車路線建議與地圖分析。**零依賴、純前端**，沒有後端也沒有 npm 套件。
 
 ## 能做什麼
 
@@ -566,3 +566,37 @@ npm run test:v111        # 這一版新增的測試（也已加入 npm test）
 - 新增：`server/osm/audit.mjs`、`server/osm/conditional.mjs`、`server/osm/buildings.mjs`、`server/traffic/events.mjs`、`server/transit/rail-provider.mjs`、`server/transit/transfer-engine.mjs`、`server/transit/raptor.mjs`、`server/transit-engine.mjs`、`js/map-view.js`、`js/osm-buildings.js`、`js/transit-plan.js`、`js/hmm-match.js`、`tools/osm/osm-audit.mjs`、`tools/osm/osm-buildings.mjs`、`tools/traffic-sync.mjs`、`docs/oas/*`、`docs/reports/*`
 - 測試：`test/osm-v111.mjs`、`test/transit-rail.mjs`、`test/nav-hmm.mjs`、`test/map-view.mjs`、`test/fixtures/rail-fixture.mjs`、`test/make-transit-cache.mjs`
 - 修改：`server/osm/router.mjs`（依時間的轉向限制、道路事件 overlay、步行可達範圍）、`server/osm/restrictions.mjs`、`server/osm/access.mjs`、`server/osm/tags.mjs`、`server/osm-engine.mjs`、`server/server.mjs`、`server/backend.mjs`、`server/route-worker.mjs`、`server/config.mjs`、`server/transit/snapshot.mjs`、`server/transit/timetable-store.mjs`、`tools/osm/osm-build.mjs`、`tools/transit-sync.mjs`、`js/osm.js`、`js/ui-events.js`、`js/ui-touch.js`、`js/nav-ui.js`、`js/navigation.js`、`js/render-core.js`、`js/main.js`、`index.html`、`css/app.css`、`package.json`、`.env.example`
+
+## v1.12.0：UI v2（地圖為背景的導航介面、深色模式、手機／平板／桌機／車機）
+
+設計規格與驗收清單：[`docs/design/UI_V2_DESIGN.md`](docs/design/UI_V2_DESIGN.md)。規劃、導航、大眾運輸的邏輯沒有改；既有元素（同一個 id、同一組事件）由 `js/ui-shell.js` 搬到新的外殼裡。
+
+- **主介面**：全螢幕地圖；頂部搜尋列（目的地，含語音輸入，瀏覽器支援時才顯示）；右上浮動按鈕（圖層、道路事件、2D／3D、指北）、右下（定位、縮放）；底部可拖拽面板（收合／半展開／全展開三段，手機），平板與桌機是左側浮動卡片；常用地址（家、公司、最近，存在這支手機）。
+- **路線規劃**：起訖點都有時自動規劃；路線方案卡片（推薦／備選、時間、距離、到達時刻、紅綠燈數、行經國道公里數、經過的道路事件），選中高亮；主按鈕「開始導航」。**沒有即時壅塞資料**，路況條顯示「無即時路況資料」，不畫假的紅黃綠。
+- **導航中**：主色轉向卡（自繪轉向圖示、距離、路名、接著）；接近轉彎（汽車 200 m、機車 150、自行車 80、步行 50）時放大；剩餘時間／距離／到達時刻；「結束」獨立，暫停、重複、語音收進「更多」。
+- **深色模式**：選單可選自動（跟隨系統；導航中依日出日落）、淺色、深色；地圖、建築、卡片都有各自的深色配色（不再反相）。
+- **車機模式**：橫向大螢幕觸控自動放大字與觸控區（56 px），也可在選單手動開啟。
+- **效能與無障礙**：毛玻璃只用在搜尋列、浮動按鈕、導航卡；「省電樣式」、`prefers-reduced-transparency`、不支援時改不透明；`prefers-reduced-motion` 關閉動畫；按鈕都有 `aria-label`，觸控區 ≥ 44 px。
+- **道路事件圖層**：TDX 道路事件（施工、事故、管制）畫在地圖上，點選看詳情；`/api/v1/traffic/events?bbox=西,南,東,北`。
+- **路線 API** 新增 `signals`（經過的號誌路口數；分隔道路兩個方向的號誌點 40 m 內只算一次）。
+- **版權**：圖示全部自繪（`js/ui-icons.js`）、系統字體、OSM 與 TDX 署名；沒有使用任何第三方導航 App 的商標、圖標或素材。
+- 新增：`js/ui-shell.js`、`js/ui-icons.js`、`docs/design/UI_V2_DESIGN.md`；修改：`css/app.css`、`index.html`、`js/pwa.js`、`js/osm.js`、`js/osm-buildings.js`、`js/nav-ui.js`、`js/render-core.js`、`js/main.js`、`server/osm/router.mjs`、`server/osm-engine.mjs`。
+
+## v1.13.0：店家地點搜尋（OpenStreetMap POI）
+
+規劃與實作差異：[`docs/design/POI_SEARCH_PLAN.md`](docs/design/POI_SEARCH_PLAN.md)。這一版是第一階段；**途經點**（第二階段）還沒做。
+
+- **資料**：從同一份台灣 OSM PBF 擷取店家與地點（`npm run osm:poi`，約 30～60 秒）→ 圖資料夾裡的 `osm-poi.json.gz`。2026-11-17 的台灣檔：200,168 個地點（點 138,875、面 61,293，其中 21,129 個沒有名稱但保留，例如加油站、廁所、ATM），約 5.4 MB。停車格、長椅、垃圾桶、飲水機、置物櫃等不收。
+- **沒有的東西（不假裝有）**：OSM 沒有評分與評論，介面不顯示；營業時間只有約 14% 的地點有，沒有的寫「營業時間未提供」，國定假日等無法判斷的規則顯示原文；新開或已關的店要重新下載 PBF 並重跑 `osm:poi` 才會更新。
+- **搜尋**：名稱、品牌、英文名、別名都能搜；「臺／台」、全形半形、大小寫視為相同；同義詞（小七／7-11／統一超商、全家／FamilyMart、麥當勞／McDonald's、星巴克／Starbucks、中油、全聯、好市多…）；類別詞（加油站、便利商店、咖啡、藥局、ATM、停車場、廁所…）直接找附近這一類；「店名 地標」（例如「麥當勞 台北車站」）以地標為中心找 5 km 內；同名連鎖店只列最相關的 3 家，並註明「附近還有 N 家」（5 km 內）。排序＝文字相符程度＋類別加權－距離（對數）。
+- **API**（快取、限流、錯誤格式與其他 OSM API 相同）：
+  - `GET /api/v1/poi/search?q=&near=緯度,經度&category=&openNow=1&limit=&bbox=西,南,東,北`
+  - `GET /api/v1/poi/nearby?lat=&lon=&radius=公尺（≤5000）&category=&openNow=1`
+  - `GET /api/v1/poi/detail?id=n123`（電話、網站、營業時間原文與判斷、樓層、OSM 連結）
+  - `GET /api/v1/poi/categories`（類別、圖示名稱、全台數量）
+  - 沒有門牌的地點補「附近道路」（最近的有名稱道路，標示是推得的）；`/api/v1/osm/info` 的 `poi` 標示資料是否可用；沒有資料檔時回 404 `NO_POI`。
+- **介面**（接在 UI v2 上，`js/poi.js`）：頂部搜尋下拉分「地點」與「道路」兩區；搜尋列下方的類別快捷鈕（加油站、便利商店、餐廳、咖啡、停車場、ATM、醫院、診所、藥局、廁所、充電站、住宿）；按 Enter 或「查看全部」打開結果清單（底部面板／左側卡片），可篩選「營業中」；地圖上編號標記，縮小時重疊的合併成數字圈；點清單或標記開啟詳細卡（營業狀態、時段、地址、電話可直接撥打、網站、OSM 連結與署名），「設為目的地」「設為起點」後照原本流程自動規劃路線。
+- **實測**（本機、全台資料）：載入＋建索引約 2.2 秒、堆積增加約 114 MB（每個背景執行緒一份）；15 種常見查詢各跑 3 次，單次查詢中位數 2.3 ms、最慢 27 ms；伺服器回應（含補附近道路）約 11 ms。
+- **測試**：`npm run test:poi`（已加入 `npm test`）：正規化、類別對照、營業時間（跨午夜、即將打烊、看不懂的寫法）、用測試內產生的小型 PBF 跑擷取→檔案→載入→搜尋（同義詞、英文前綴、類別詞、店名＋地標、連鎖店合併、營業中篩選、地圖範圍、附近、詳細資料、面狀地點中心點），以及伺服器 API（主執行緒與背景執行緒、資料檔出現後自動重新載入、錯誤碼、快取）。
+- 修正：地圖 SVG 裡的標記收不到點擊（舊規則讓 `#routeSvg` 的 path／circle 不接收滑鼠）——店家標記與 v1.12 的道路事件標記都受影響，已一併修正。
+- 新增：`server/osm/poi.mjs`、`server/osm/poi-categories.mjs`、`tools/osm/osm-poi.mjs`、`js/poi.js`、`test/poi.mjs`、`docs/design/POI_SEARCH_PLAN.md`；修改：`server/osm-engine.mjs`、`server/backend.mjs`、`server/route-worker.mjs`、`server/server.mjs`、`js/ui-search.js`、`js/ui-shell.js`（搜尋框提示文字）、`js/ui-icons.js`（類別圖示，自繪）、`js/main.js`、`css/app.css`、`package.json`。

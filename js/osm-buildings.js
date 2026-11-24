@@ -15,6 +15,10 @@ import { scheduleRender, worldToScreen, labelBBox, placeLabels } from './render-
 
 const BLD_ZMIN = 15, BLD_ZMAX = 18, BLD_CACHE = 400, BLD_PAR = 4, BLD_SHOW_DZ = 16, BLD_LABEL_DZ = 18;
 const bldS = { tiles: new Map(), inflight: new Set(), queue: [], fail: 0 };
+// v1.12 深色模式的建築配色（淺色、深色各一組；推估高度的仍是虛線半透明）
+const bldDark = () => typeof document !== 'undefined' && document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === 'dark';
+const bldPal = () => bldDark() ? { fill: '#2b303b', line: '#3a404c', estFill: '#262a33', estLine: '#343a45', wall: '#4a4f5a', wallLine: '#5f6470', roof: '#5b616d', estWall: '#3a3f49', estLine3: '#4a505b', estRoof: '#454b56', label: '#c4c9d0', halo: '#151922' }
+  : { fill: '#e4ddd2', line: '#cfc6b8', estFill: '#ece7df', estLine: '#d6cfc4', wall: '#a8a29e', wallLine: '#78716c', roof: '#e7e5e4', estWall: '#cbd5e1', estLine3: '#94a3b8', estRoof: '#f1f5f9', label: '#57534e', halo: '#fff' };
 const bldOn = () => !!(State.osm && State.osm.avail && State.osm.on && State.osm.info && State.osm.info.buildings && State.osm.info.buildings.available);
 const bldLon2x = (lon, z) => Math.floor((lon + 180) / 360 * 2 ** z), bldLat2y = (lat, z) => { const r = lat * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z); };
 function bldFetch(z, x, y) {
@@ -55,7 +59,7 @@ export function drawBuildings({ z, dz, mpp, bx0, bx1, by0, by1, phase, view }) {
     if (pitched) return '';
     let solid = '', est = '';
     for (const t of bldFrame.list) for (const b of t.b) { const d = bldRing(b, bx0, bx1, by0, by1); if (!d) continue; if (b.src === 2) est += d; else solid += d; }
-    return (solid ? `<path d="${solid}" fill="#e4ddd2" stroke="#cfc6b8" stroke-width="0.8"/>` : '') + (est ? `<path d="${est}" fill="#ece7df" stroke="#d6cfc4" stroke-width="0.8" stroke-dasharray="3 2"/>` : '');
+    const C = bldPal(); return (solid ? `<path d="${solid}" fill="${C.fill}" stroke="${C.line}" stroke-width="0.8"/>` : '') + (est ? `<path d="${est}" fill="${C.estFill}" stroke="${C.estLine}" stroke-width="0.8" stroke-dasharray="3 2"/>` : '');
   }
   if (!bldFrame) return '';
   if (phase === '3d') {
@@ -64,20 +68,20 @@ export function drawBuildings({ z, dz, mpp, bx0, bx1, by0, by1, phase, view }) {
     const items = [];
     for (const t of bldFrame.list) for (const b of t.b) { const [sx, sy] = worldToScreen(b.cx, b.cy); if (sx < bx0 || sx > bx1 || sy < by0 || sy > by1) continue; items.push({ b, depth: sx * ux + sy * uy }); }
     items.sort((p, q) => q.depth - p.depth);                                           // 遠（畫面上方）先畫
-    let h = '';
+    let h = ''; const C = bldPal();
     for (const { b } of items) {
       const top = b.h * k, base = b.mh * k, ox = ux * top, oy = uy * top, bxo = ux * base, byo = uy * base, pts = [];
       for (let i = 0; i < b.xs.length; i++) { const [x, y] = worldToScreen(b.xs[i], b.ys[i]); pts.push([x + bxo, y + byo]); }
       let walls = ''; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; walls += `M${p[0].toFixed(1)},${p[1].toFixed(1)}L${q[0].toFixed(1)},${q[1].toFixed(1)}L${(q[0] + ox - bxo).toFixed(1)},${(q[1] + oy - byo).toFixed(1)}L${(p[0] + ox - bxo).toFixed(1)},${(p[1] + oy - byo).toFixed(1)}Z`; }
       const roof = 'M' + pts.map(p => `${(p[0] + ox - bxo).toFixed(1)},${(p[1] + oy - byo).toFixed(1)}`).join('L') + 'Z', est = b.src === 2, dash = est ? ' stroke-dasharray="3 2"' : '';
-      h += `<g class="bld3d" data-src="${b.src}"${est ? ' opacity=".55"' : ''}><path d="${walls}" fill="${est ? '#cbd5e1' : '#a8a29e'}" stroke="${est ? '#94a3b8' : '#78716c'}" stroke-width=".5"${dash}/><path d="${roof}" fill="${est ? '#f1f5f9' : '#e7e5e4'}" stroke="${est ? '#94a3b8' : '#78716c'}" stroke-width=".7"${dash}/></g>`;
+      h += `<g class="bld3d" data-src="${b.src}"${est ? ' opacity=".55"' : ''}><path d="${walls}" fill="${est ? C.estWall : C.wall}" stroke="${est ? C.estLine3 : C.wallLine}" stroke-width=".5"${dash}/><path d="${roof}" fill="${est ? C.estRoof : C.roof}" stroke="${est ? C.estLine3 : C.wallLine}" stroke-width=".7"${dash}/></g>`;
     }
     return h;
   }
   if (phase === 'labels') {
     if (bldFrame.dz < BLD_LABEL_DZ) return '';
     const c = []; for (const t of bldFrame.list) for (const b of t.b) { if (!b.name) continue; const [x, y] = worldToScreen(b.cx, b.cy); if (x < 0 || y < 0 || x > svg.clientWidth || y > svg.clientHeight) continue; c.push({ x, y, text: b.name, segLen: b.h, bbox: labelBBox(x, y, b.name) }); }
-    return placeLabels(c, 25).map(l => `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="middle" font-size="11" fill="#57534e" stroke="#fff" stroke-width="3" paint-order="stroke">${esc(l.text)}</text>`).join('');
+    return placeLabels(c, 25).map(l => `<text x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="middle" font-size="11" fill="${bldPal().label}" stroke="${bldPal().halo}" stroke-width="3" paint-order="stroke">${esc(l.text)}</text>`).join('');
   }
   return '';
 }

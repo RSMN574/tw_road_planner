@@ -33,6 +33,7 @@ export function osmAttach(info) {
 }
 // 開／關 OSM 模式之後：調整畫面、控制項、提示
 export function osmApply() {
+  if (typeof document !== 'undefined' && document.body && document.body.classList) document.body.classList.toggle('osm-map', osmOn());   // v1.12：OSM 底圖有自己的深色配色，不套反相濾鏡
   const on = osmOn(), attr = document.getElementById('osmAttr'), info = State.osm && State.osm.info;
   if (attr) attr.hidden = !on;
   const hint = document.getElementById('osmHint');
@@ -185,6 +186,13 @@ export async function osmInspect(x, y, box) {                     // x, y：世�
 // v1.11：圖磚最高 z18（512 像素；＝一般網頁地圖的 z19）。再放大是向量 overzoom（座標量化約 3.4 cm，不會模糊），上限見 map-view.ZOOM
 const OSM_ZMIN = 6, OSM_ZMAX = ZOOM.tileMax512, OSM_CACHE_MAX = 700, OSM_PARALLEL = 6, OSM_MAX_TILES = 120;
 // 樣式：顏色、寬度（像素，依縮放加粗）、外框
+// v1.12 深色地圖：道路自己的深色配色（不再把整張地圖反相）；主色調與介面 token 一致
+const OSM_DARK = { motorway: '#c98a2b', trunk: '#b9772f', primary: '#8f7a3a', secondary: '#6f6a48', tertiary: '#4a5263', motorway_link: '#a8752b', trunk_link: '#9a6630', primary_link: '#7a6a36', secondary_link: '#5f5c44', tertiary_link: '#434b5a',
+  unclassified: '#424a59', residential: '#3d4452', road: '#3d4452', living_street: '#363c48', busway: '#2f4a6e', service: '#343a46', track: '#5b4a36', escape: '#3d4452', pedestrian: '#3a404c', footway: '#7a4a4a', path: '#5a5550',
+  steps: '#8a4646', cycleway: '#3a5f8f', bridleway: '#5a5550', corridor: '#444a55', ferry: '#3b7fa3', pier_link: '#4a5260', default: '#3d4452' };
+export function osmPalette() { const dark = typeof document !== 'undefined' && document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === 'dark';
+  return dark ? { dark, casing: '#232833', arrow: '#9aa0a6', label: '#c4c9d0', halo: '#151922', bld: ['#2b303b', '#3a404c', '#262a33', '#343a45'], bld3d: ['#4a4f5a', '#5f6470', '#3a3f49', '#2f343d'] }
+              : { dark, casing: '#cbd5e1', arrow: '#64748b', label: '#475569', halo: '#ffffff', bld: ['#e4ddd2', '#cfc6b8', '#ece7df', '#d6cfc4'], bld3d: ['#a8a29e', '#78716c', '#e7e5e4', '#cbd5e1'] }; }
 const OSM_STYLE = {
   motorway: ['#f59e0b', 3.2, 1], trunk: ['#fb923c', 2.8, 1], primary: ['#fcd34d', 2.4, 1], secondary: ['#fde68a', 2.0, 1], tertiary: ['#ffffff', 1.8, 1],
   motorway_link: ['#f59e0b', 1.6, 1], trunk_link: ['#fb923c', 1.5, 1], primary_link: ['#fcd34d', 1.4, 1], secondary_link: ['#fde68a', 1.3, 1], tertiary_link: ['#ffffff', 1.2, 1],
@@ -234,6 +242,7 @@ function osmDecode(t) {
 }
 // 畫底圖（render-core.drawGrid 呼叫）：先用已快取的圖磚畫（較粗的層級當暫時的替代），缺的再去抓
 export function drawOsmBase() {
+  const PAL = osmPalette(), osmStyleOf = hw => { const s = OSM_STYLE[hw] || ['#ffffff', 1, 1]; return PAL.dark ? [OSM_DARK[hw] || OSM_DARK.default, s[1], s[2]] : s; };
   if (!osmOn() || !State.base || !svg || !svg.clientWidth) return;
   const S = State.osm, v = osmView(); let z = osmZoom(v.dpp), x0, x1, y0, y1;
   for (;; z--) { x0 = osmLon2x(v.w0, z); x1 = osmLon2x(v.e0, z); y0 = osmLat2y(v.n0, z); y1 = osmLat2y(v.s0, z); if ((x1 - x0 + 1) * (y1 - y0 + 1) <= OSM_MAX_TILES || z <= OSM_ZMIN) break; }   // 3D 看很遠時圖磚太多：整個畫面改用較粗的層級
@@ -271,15 +280,15 @@ export function drawOsmBase() {
   const keys = Object.keys(paths), keyOrder = k => { const [hw, px] = k.split('|'); return OSM_ORDER.indexOf(hw) * 1000 + (px ? +px : 0); };
   keys.sort((a, b) => keyOrder(a) - keyOrder(b));
   for (const pass of [0, 1]) for (const k of keys) {                                   // 第 0 輪：外框（灰），第 1 輪：道路顏色
-    const [hw, mpx] = k.split('|'), ps = paths[k], st = OSM_STYLE[hw] || ['#ffffff', 1, 1], wpx = mpx ? +mpx : st[1] * zk;
-    if (pass === 0) { if (st[2]) h += `<path d="${ps.join('')}" fill="none" stroke="#cbd5e1" stroke-width="${(wpx + (mpx ? Math.max(1.6, wpx * 0.12) : 1.6)).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`; continue; }
+    const [hw, mpx] = k.split('|'), ps = paths[k], st = osmStyleOf(hw), wpx = mpx ? +mpx : st[1] * zk;
+    if (pass === 0) { if (st[2]) h += `<path d="${ps.join('')}" fill="none" stroke="${PAL.casing}" stroke-width="${(wpx + (mpx ? Math.max(1.6, wpx * 0.12) : 1.6)).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`; continue; }
     h += `<path d="${ps.join('')}" fill="none" stroke="${st[0]}" stroke-width="${wpx.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"${OSM_DASH[hw] ? ` stroke-dasharray="${OSM_DASH[hw]}"` : ''}/>`;
   }
-  if (arrows.length) h += `<path d="${arrows.join('')}" fill="none" stroke="#64748b" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>`;
+  if (arrows.length) h += `<path d="${arrows.join('')}" fill="none" stroke="${PAL.arrow}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>`;
   h += drawBuildings({ z, dz, mpp, bx0, bx1, by0, by1, phase: '3d' });
   const byName = new Map(); for (const c of labels) { const o = byName.get(c.text); if (!o || c.segLen > o.segLen) byName.set(c.text, c); }   // 雙向分隔的道路是兩條 way：同名只標一次
   const fs = Number.isFinite(dz) && dz >= 18 ? 13 : 11;
-  for (const c of placeLabels([...byName.values()], Number.isFinite(dz) && dz >= 17 ? 30 : 18)) h += `<text x="${c.x.toFixed(1)}" y="${c.y.toFixed(1)}" text-anchor="middle" font-size="${fs}" fill="#475569" stroke="#ffffff" stroke-width="3" paint-order="stroke">${esc(c.text)}</text>`;
+  for (const c of placeLabels([...byName.values()], Number.isFinite(dz) && dz >= 17 ? 30 : 18)) h += `<text x="${c.x.toFixed(1)}" y="${c.y.toFixed(1)}" text-anchor="middle" font-size="${fs}" fill="${PAL.label}" stroke="${PAL.halo}" stroke-width="3" paint-order="stroke">${esc(c.text)}</text>`;
   h += drawBuildings({ z, dz, mpp, bx0, bx1, by0, by1, phase: 'labels' });
   if (S.inspect) { const [ix, iy] = worldToScreen(S.inspect[0], S.inspect[1]); h += `<circle cx="${ix.toFixed(1)}" cy="${iy.toFixed(1)}" r="6" fill="#f59e0b" stroke="#fff" stroke-width="2"/>`; }
   h += '</g>';

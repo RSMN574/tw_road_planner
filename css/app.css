@@ -235,3 +235,272 @@ html[data-theme="dark"] #mapZoom, html[data-theme="dark"] #mapScale { background
 .tp-legs { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .tp-leg { display: flex; gap: 6px; padding: 4px 6px; border-left: 4px solid #cbd5e1; background: rgba(148,163,184,.08); border-radius: 4px; }
 html[data-theme="dark"] .tp-opt.sel { background: #1e3a8a; }
+
+/* ============================================================
+   v1.12 UI v2（docs/design/UI_V2_DESIGN.md）：設計 token、全螢幕地圖、搜尋列、浮動按鈕、底部可拖拽面板、路線卡、導航卡
+   只作用在 body.ds（ui-shell.js 建立外殼後才加上）；舊版樣式保留給測試與沒有外殼的情況
+   ============================================================ */
+:root {
+  --c-primary: #1A73E8; --c-primary-strong: #1557B0; --c-on-primary: #fff; --c-primary-tint: rgba(26,115,232,.10);
+  --c-bg: #F1F3F4; --c-surface: rgba(255,255,255,.94); --c-surface-solid: #fff; --c-surface-2: #F1F3F4; --c-text: #202124; --c-text-2: #5F6368; --c-text-3: #80868B; --c-border: #DADCE0;
+  --c-good: #188038; --c-slow: #B06000; --c-jam: #C5221F; --c-nav: #1A73E8; --c-map-bg: #EEF0EC; --c-grid: #E6E8E4;
+  --fs-xs: .75rem; --fs-sm: .875rem; --fs-md: 1rem; --fs-lg: 1.25rem; --fs-xl: 1.5rem; --fs-2xl: 2rem; --fs-nav: 2.5rem;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --r-sm: 12px; --r-md: 16px; --r-lg: 20px; --r-pill: 999px; --tap: 44px;
+  --sh-1: 0 1px 3px rgba(60,64,67,.30), 0 1px 2px rgba(60,64,67,.15); --sh-2: 0 4px 12px rgba(60,64,67,.20); --sh-3: 0 -6px 24px rgba(60,64,67,.22);
+  --glass: blur(12px) saturate(1.2); --ease: cubic-bezier(.2,.8,.2,1);
+  --font: system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+}
+html[data-theme="dark"] {
+  --c-primary: #8AB4F8; --c-primary-strong: #AECBFA; --c-on-primary: #0B1A33; --c-primary-tint: rgba(138,180,248,.16);
+  --c-bg: #0E1116; --c-surface: rgba(28,31,38,.94); --c-surface-solid: #1C1F26; --c-surface-2: #2A2E37; --c-text: #E8EAED; --c-text-2: #BDC1C6; --c-text-3: #9AA0A6; --c-border: #3C4043;
+  --c-good: #81C995; --c-slow: #FDD663; --c-jam: #F28B82; --c-nav: #174EA6; --c-map-bg: #1B1F27; --c-grid: #222730;
+  --sh-1: 0 1px 3px rgba(0,0,0,.6); --sh-2: 0 4px 12px rgba(0,0,0,.5); --sh-3: 0 -6px 24px rgba(0,0,0,.55);
+}
+/* 車機（橫向大螢幕觸控）或手動「車機模式」：字與觸控區放大 1.25 倍 */
+@media (min-width: 900px) and (orientation: landscape) and (pointer: coarse) { :root { font-size: 20px; --tap: 56px; } }
+html:has(body.ds.car) { font-size: 20px; } body.ds.car { --tap: 56px; }
+
+/* 深色模式：OSM 底圖用自己的深色配色，不再反相 */
+html[data-theme="dark"] body.osm-map #routeSvg { filter: none; }
+
+body.ds { display: block; height: 100dvh; font-family: var(--font); color: var(--c-text); background: var(--c-bg); }
+body.ds #canvasWrap { position: fixed; inset: 0; background: var(--c-map-bg); }
+body.ds button { font-family: inherit; }
+body.ds :focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+.ds-icon-btn { width: var(--tap); height: var(--tap); min-height: 0; padding: 0; border-radius: var(--r-sm); background: transparent !important; color: var(--c-text-2); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ds-icon-btn:hover { background: var(--c-surface-2) !important; }
+.ic { display: block; flex-shrink: 0; }
+
+/* 頂部搜尋列 */
+#dsTop { position: fixed; z-index: 25; top: calc(var(--sp-3) + env(safe-area-inset-top)); left: var(--sp-3); right: var(--sp-3); height: calc(var(--tap) + 8px); display: flex; align-items: center; gap: 2px; padding: 0 4px;
+  background: var(--c-surface); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); border-radius: var(--r-md); box-shadow: var(--sh-2); }
+#dsTop .ds-search { flex: 1; display: flex; align-items: center; gap: var(--sp-2); color: var(--c-text-3); min-width: 0; }
+#dsTop #to { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--c-text); font-size: var(--fs-md); padding: 10px 0; outline: none; }
+#dsTop #to::placeholder { color: var(--c-text-3); }
+#dsMic.listening { color: var(--c-on-primary); background: var(--c-jam) !important; animation: ds-pulse 1.2s infinite; } #dsMic.err { color: var(--c-jam); }
+@keyframes ds-pulse { 50% { box-shadow: 0 0 0 8px rgba(197,34,31,.18); } }
+.ds-results { position: absolute; top: calc(100% + 8px); left: 0; right: 0; max-height: 55dvh; overflow-y: auto; background: var(--c-surface-solid); border-radius: var(--r-md); box-shadow: var(--sh-2); margin: 0 !important; }
+.ds-results:empty { display: none; }
+.ds-results div { padding: 12px 16px !important; min-height: var(--tap); font-size: var(--fs-sm) !important; color: var(--c-text); border-color: var(--c-border) !important; }
+.ds-results div:hover { background: var(--c-primary-tint) !important; }
+body.ds.navigating #dsTop, body.ds.navigating #dsMenu { display: none; }
+
+/* 選單 */
+#dsMenu { position: fixed; z-index: 40; top: calc(76px + env(safe-area-inset-top)); left: var(--sp-3); width: min(320px, calc(100vw - 24px)); padding: var(--sp-4); background: var(--c-surface-solid); color: var(--c-text); border-radius: var(--r-md); box-shadow: var(--sh-2); }
+#dsMenu[hidden], #dsLayers[hidden], #dsEventCard[hidden] { display: none; }
+.ds-sec { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); margin: var(--sp-3) 0 var(--sp-2); letter-spacing: .02em; }
+.ds-sec:first-child { margin-top: 0; }
+.ds-seg { display: flex; background: var(--c-surface-2); border-radius: var(--r-sm); padding: 3px; gap: 3px; }
+.ds-seg button { flex: 1; min-height: 40px; background: transparent; color: var(--c-text-2); border-radius: 10px; font-size: var(--fs-sm); }
+.ds-seg button[aria-checked="true"] { background: var(--c-surface-solid); color: var(--c-primary); box-shadow: var(--sh-1); }
+.ds-seg button:hover:not(:disabled) { background: var(--c-surface-solid); }
+.ds-toggle { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--tap); font-size: var(--fs-sm); color: var(--c-text); cursor: pointer; }
+.ds-toggle input { width: 20px; height: 20px; accent-color: var(--c-primary); }
+.ds-menu-item { display: flex; align-items: center; gap: var(--sp-3); min-height: var(--tap); background: transparent; color: var(--c-text); font-weight: 500; text-align: left; padding: 0 var(--sp-2); border-radius: var(--r-sm); }
+.ds-menu-item:hover:not(:disabled) { background: var(--c-surface-2); }
+.ds-muted { color: var(--c-text-2); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--sp-1); }
+.ds-credit { margin-top: var(--sp-3); }
+
+/* 浮動地圖按鈕：右上、右下兩組 */
+body.ds #mapCtl { position: absolute; inset: 0; display: block; pointer-events: none; z-index: 4; }
+.ds-fab-group { position: absolute; right: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); pointer-events: auto; }
+.ds-fab-group.top { top: calc(76px + env(safe-area-inset-top)); }
+.ds-fab-group.bottom { bottom: calc(112px + env(safe-area-inset-bottom)); }
+body.ds #mapCtl .ds-fab-group > button { width: var(--tap); height: var(--tap); min-height: 0; padding: 0; border-radius: 14px; border: 0; background: var(--c-surface); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
+  color: var(--c-text); box-shadow: var(--sh-1); display: flex; align-items: center; justify-content: center; font-size: var(--fs-sm); font-weight: 700; }
+body.ds #mapCtl .ds-fab-group > button:hover:not(:disabled) { background: var(--c-surface-solid); }
+body.ds #mapCtl .ds-fab-group > button[aria-pressed="true"] { background: var(--c-primary); color: var(--c-on-primary); }
+body.ds #mapCtl .ds-fab-group > button:disabled { opacity: .45; background: var(--c-surface); }
+body.ds #mapNorth span { color: var(--c-jam); display: flex; }
+body.ds #mapZoom { background: var(--c-surface); color: var(--c-text-2); border-radius: 8px; font-size: 11px; text-align: center; padding: 2px 0; box-shadow: var(--sh-1); }
+.ds-pop { position: absolute; right: calc(var(--tap) + 8px); top: 0; width: 260px; padding: var(--sp-3) var(--sp-4); background: var(--c-surface-solid); color: var(--c-text); border-radius: var(--r-md); box-shadow: var(--sh-2); }
+.ds-pop-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-2) 0; }
+body.ds .ds-pop-row button { width: auto; height: auto; min-height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: var(--c-surface-2); color: var(--c-text); font-size: var(--fs-sm); font-weight: 500; box-shadow: none; }
+body.ds #mapScale { left: var(--sp-3); bottom: calc(112px + env(safe-area-inset-bottom)); color: var(--c-text-2); border-color: var(--c-text-2); background: var(--c-surface); }
+body.ds #osmAttr { left: var(--sp-3); right: auto; bottom: calc(96px + env(safe-area-inset-bottom)); background: var(--c-surface); color: var(--c-text-2); }
+body.ds #mapZoomHint { top: calc(80px + env(safe-area-inset-top)); background: var(--c-surface); color: var(--c-text-2); }
+body.ds.navigating .ds-fab-group, body.ds.navigating #mapScale { display: none; }
+body.ds #routeSvg .ds-ev { pointer-events: auto; cursor: pointer; }
+
+/* 底部可拖拽面板（手機）；平板／桌機為左側浮動卡片 */
+body.ds #panel { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; width: auto; height: 92dvh; border: 0; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--c-surface-solid); color: var(--c-text);
+  box-shadow: var(--sh-3); display: flex; flex-direction: column; overflow: hidden; transition: transform .28s var(--ease); will-change: transform; transform: translateY(calc(100% - 96px)); }
+body.ds #panel.sheet-half { transform: translateY(calc(100% - 48dvh)); }
+body.ds #panel.sheet-full { transform: translateY(0); }
+body.ds #panel.dragging { transition: none; }
+body.ds #panel h1 { position: relative; min-height: 56px; padding: 18px var(--sp-4) 8px; background: transparent; color: var(--c-text); font-size: var(--fs-sm); font-weight: 600; cursor: grab; touch-action: none; border-radius: var(--r-lg) var(--r-lg) 0 0; }
+body.ds #panel h1::before { display: none; }
+body.ds #panel h1 small { color: var(--c-text-3); }
+.ds-grabber { position: absolute; left: 50%; top: 7px; width: 40px; height: 5px; margin-left: -20px; border-radius: 3px; background: var(--c-border); }
+body.ds #panel h1 .tools button { width: 40px; height: 40px; background: var(--c-surface-2); color: var(--c-text); }
+body.ds #panel .body { padding: 0 var(--sp-4) calc(var(--sp-6) + env(safe-area-inset-bottom)); overflow-y: auto; flex: 1; overscroll-behavior: contain; }
+body.ds.navigating #panel { display: none; }
+@media (min-width: 900px) {
+  #dsTop { right: auto; width: 380px; }
+  body.ds #panel { top: calc(80px + env(safe-area-inset-top)); left: var(--sp-3); right: auto; bottom: auto; width: 380px; height: auto; max-height: calc(100dvh - 96px); border-radius: var(--r-lg); box-shadow: var(--sh-2); transform: none !important; }
+  body.ds #panel.sheet-peek { max-height: 56px; } body.ds #panel h1 { cursor: pointer; }
+  body.ds #panel.sheet-peek .body { display: none; }
+  .ds-fab-group.bottom { bottom: var(--sp-5); } body.ds #mapScale { bottom: var(--sp-3); left: 404px; } body.ds #osmAttr { bottom: 4px; right: 4px; left: auto; }
+  #dsEventCard { bottom: var(--sp-5) !important; }
+}
+@media (min-width: 900px) and (orientation: landscape) and (pointer: coarse) { #dsTop, body.ds #panel { width: 36vw; } body.ds #mapScale { left: calc(36vw + 24px); } }
+body.ds.car #dsTop, body.ds.car #panel { width: min(36vw, 520px); }
+
+/* 規劃區 */
+#dsQuick { padding-top: var(--sp-1); } body.has-dest #dsQuick { display: none; }
+.ds-quick-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
+.ds-chipbtn { display: flex; align-items: center; gap: var(--sp-2); min-height: 56px; padding: var(--sp-2) var(--sp-3); text-align: left; background: var(--c-surface-2) !important; color: var(--c-text); border-radius: var(--r-sm); font-weight: 400; }
+.ds-chipbtn span { display: flex; flex-direction: column; min-width: 0; } .ds-chipbtn b { font-size: var(--fs-sm); } .ds-chipbtn small { font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-chipbtn[data-empty] small { color: var(--c-text-3); } .ds-chipbtn .ic { color: var(--c-primary); }
+.ds-recent { display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: var(--tap); background: transparent !important; color: var(--c-text); font-weight: 400; text-align: left; padding: 0 var(--sp-1); border-bottom: 1px solid var(--c-border); border-radius: 0; }
+.ds-recent .ic { color: var(--c-text-3); }
+#dsPlan { display: none; } body.has-dest #dsPlan, body.ds #panel.sheet-full #dsPlan { display: block; }
+.ds-od { display: flex; gap: var(--sp-2); align-items: center; padding: var(--sp-2) var(--sp-3); background: var(--c-surface-2); border-radius: var(--r-sm); margin-bottom: var(--sp-3); }
+.ds-od-rows { flex: 1; min-width: 0; } .ds-od-rows .row { margin: 0; } .ds-od-rows .row + .row { border-top: 1px solid var(--c-border); padding-top: var(--sp-2); margin-top: var(--sp-2); }
+body.ds .ds-od-rows label { font-size: var(--fs-xs); color: var(--c-text-2); font-weight: 600; margin: 0; }
+body.ds .ds-od-rows input { background: var(--c-surface-solid); border-color: var(--c-border); color: var(--c-text); border-radius: 10px; min-height: 40px; }
+body.ds .ds-od-rows .hint { font-size: var(--fs-sm); color: var(--c-text); }
+body.ds #myLoc { width: auto; min-height: 36px; padding: 0 12px; margin-top: 6px !important; border-radius: var(--r-pill); background: var(--c-primary-tint) !important; color: var(--c-primary); font-size: var(--fs-xs) !important; }
+.ds-modes { display: flex; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; margin-bottom: var(--sp-3); }
+.ds-modes button { flex: 1 0 auto; width: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 60px; min-height: 56px; padding: 6px 8px; background: var(--c-surface-2) !important; color: var(--c-text-2); border-radius: var(--r-sm); font-size: var(--fs-xs); font-weight: 500; }
+.ds-modes button[aria-selected="true"] { background: var(--c-primary-tint) !important; color: var(--c-primary); box-shadow: inset 0 0 0 2px var(--c-primary); }
+.ds-cards { display: flex; gap: var(--sp-2); overflow-x: auto; scroll-snap-type: x mandatory; padding: 2px 2px var(--sp-2); margin: 0 -2px; }
+.ds-route { flex: 0 0 min(200px, 64vw); width: auto; scroll-snap-align: start; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: var(--sp-3); text-align: left; background: var(--c-surface-2) !important; color: var(--c-text); border-radius: var(--r-md); font-weight: 400; border: 2px solid transparent; }
+.ds-route.sel { background: var(--c-primary-tint) !important; border-color: var(--c-primary); }
+.ds-route-tag { font-size: var(--fs-xs); color: var(--c-text-2); font-weight: 600; } .ds-route-tag.rec { color: var(--c-primary); }
+.ds-route-time { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.ds-route-sub { font-size: var(--fs-sm); color: var(--c-text-2); font-variant-numeric: tabular-nums; }
+.ds-route-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: var(--fs-xs); color: var(--c-text-2); } .ds-route-meta > span { display: inline-flex; align-items: center; gap: 3px; }
+.ds-traffic { display: block; width: 100%; height: 6px; border-radius: 3px; background: var(--c-border); overflow: hidden; margin-top: 4px; }
+.ds-traffic i { display: block; height: 100%; background: var(--c-good); } .ds-traffic.none i { background: repeating-linear-gradient(90deg, var(--c-text-3) 0 6px, transparent 6px 10px); opacity: .5; }
+.ds-traffic-lbl { font-size: 11px; color: var(--c-text-3); }
+.ds-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 8px; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; }
+.ds-chip.good { background: rgba(24,128,56,.12); color: var(--c-good); } .ds-chip.slow, .ds-chip.warn { background: rgba(176,96,0,.14); color: var(--c-slow); } .ds-chip.jam { background: rgba(197,34,31,.12); color: var(--c-jam); }
+.ds-actions { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-3) 0; }
+body.ds #startNav { min-height: 52px; margin-top: 0 !important; border-radius: 14px; background: var(--c-primary); color: var(--c-on-primary); font-size: var(--fs-md); display: flex; align-items: center; justify-content: center; gap: var(--sp-2); }
+body.ds #startNav:hover:not(:disabled) { background: var(--c-primary-strong); }
+body.ds #startNav:disabled { background: var(--c-border); color: var(--c-text-3); }
+body.ds .ds-btn-2, body.ds #go { min-height: 44px; border-radius: 14px; background: var(--c-surface-2) !important; color: var(--c-primary); }
+body.ds #go:disabled { color: var(--c-text-3); }
+body.ds #navHint { font-size: var(--fs-xs); color: var(--c-text-3); }
+.ds-favset { display: flex; gap: var(--sp-4); } .ds-link { width: auto; background: transparent !important; color: var(--c-primary); padding: 8px 0; font-size: var(--fs-sm); min-height: 40px; }
+body.ds #status { border-radius: var(--r-sm); font-size: var(--fs-xs); }
+body.ds #status:not(.error):not(.loading) { display: none !important; }
+#dsDetail, #dsMore { margin-top: var(--sp-3); border-top: 1px solid var(--c-border); padding-top: var(--sp-2); }
+#dsDetail > summary, #dsMore > summary { min-height: var(--tap); display: flex; align-items: center; font-weight: 600; font-size: var(--fs-sm); color: var(--c-text-2); cursor: pointer; }
+body.ds .row label, body.ds .hint { color: var(--c-text-2); }
+body.ds select, body.ds .row input, body.ds #avoid { background: var(--c-surface-2); color: var(--c-text); border-color: var(--c-border); border-radius: 10px; min-height: 40px; }
+body.ds .rt { border-color: var(--c-border); border-radius: var(--r-sm); } body.ds .rt.active { background: var(--c-primary-tint); border-color: var(--c-primary); }
+
+/* 狀態：空、載入（骨架）、錯誤 */
+.ds-state { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--sp-2); padding: var(--sp-5) var(--sp-4); color: var(--c-text-2); font-size: var(--fs-sm); }
+.ds-state .ic { color: var(--c-text-3); } .ds-error .ic { color: var(--c-jam); } .ds-error .ds-btn-2 { width: auto; padding: 0 var(--sp-5); }
+.ds-skel { pointer-events: none; } .ds-skel i { display: block; height: 14px; width: 80%; border-radius: 7px; background: var(--c-border); animation: ds-shimmer 1.2s infinite; } .ds-skel i:first-child { width: 50%; height: 22px; } .ds-skel i:last-child { width: 60%; }
+@keyframes ds-shimmer { 50% { opacity: .45; } }
+
+/* 道路事件卡 */
+#dsEventCard { position: absolute; z-index: 6; left: 50%; transform: translateX(-50%); bottom: calc(116px + env(safe-area-inset-bottom)); width: min(360px, calc(100vw - 24px)); padding: var(--sp-3) var(--sp-4); background: var(--c-surface-solid); color: var(--c-text); border-radius: var(--r-md); box-shadow: var(--sh-2); font-size: var(--fs-sm); }
+.ds-ev-h { display: flex; justify-content: space-between; align-items: center; }
+
+/* 導航中：轉向卡（主色）、剩餘資訊卡；重要轉向放大；「結束」與其他按鈕分開 */
+body.ds #navTop { left: var(--sp-3); right: var(--sp-3); background: var(--c-nav); color: #fff; border-radius: var(--r-lg); padding: var(--sp-3) var(--sp-4); box-shadow: var(--sh-2); transition: padding .2s var(--ease); }
+body.ds #navTop.imminent { padding: var(--sp-4) var(--sp-4) var(--sp-5); } body.ds #navTop.imminent #navDist { font-size: calc(var(--fs-nav) * 1.15); } body.ds #navTop.imminent #navArrow .ic { width: 64px; height: 64px; }
+body.ds #navTop.alert { background: var(--c-jam); }
+body.ds #navArrow { min-width: 56px; display: flex; align-items: center; justify-content: center; font-size: 40px; }
+body.ds #navDist { font-size: var(--fs-nav); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+body.ds #navRoad { font-size: var(--fs-lg); font-weight: 600; } body.ds #navThen { font-size: var(--fs-sm); opacity: .85; margin-top: 4px; }
+body.ds #navThen:not(:empty) { padding-top: 4px; border-top: 1px solid rgba(255,255,255,.25); }
+body.ds #navChips { top: calc(132px + env(safe-area-inset-top)); left: var(--sp-3); }
+body.ds #gpsChip, body.ds #navOrient { min-height: 32px; display: inline-flex; align-items: center; border-radius: var(--r-pill); box-shadow: var(--sh-1); }
+body.ds #navOrient { background: var(--c-surface); color: var(--c-text); border: 0; }
+body.ds #navRecenter { right: var(--sp-3); bottom: calc(150px + env(safe-area-inset-bottom)); min-height: var(--tap); background: var(--c-surface); color: var(--c-primary); border-radius: var(--r-pill); box-shadow: var(--sh-2); }
+body.ds #navBottom { background: var(--c-surface); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); color: var(--c-text); border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--sh-3); padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom)); }
+body.ds #navBottom .info b { font-size: var(--fs-xl); font-variant-numeric: tabular-nums; } body.ds #navBottom .info small { color: var(--c-text-2); font-size: var(--fs-xs); }
+body.ds #navBottom .info > div:last-child b { color: var(--c-primary); }
+body.ds #navBottom .note { color: var(--c-text-3); }
+body.ds #navBottom .btns { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+body.ds #navBottom .btns button { flex: 1; min-height: var(--tap); border-radius: 14px; background: var(--c-surface-2); color: var(--c-text); font-size: var(--fs-sm); }
+body.ds #navBottom .btns #navEnd { flex: 0 0 34%; background: var(--c-jam); color: #fff; }
+body.ds #navBottom #navPause, body.ds #navBottom #navRepeat, body.ds #navBottom #navVoiceBtn { display: none; }
+body.ds #navBottom.show-more #navPause, body.ds #navBottom.show-more #navRepeat, body.ds #navBottom.show-more #navVoiceBtn { display: block; flex: 1 0 30%; }
+body.ds #navVoicePanel { background: var(--c-surface-solid); color: var(--c-text); border-radius: var(--r-md); }
+@media (min-width: 900px) { body.ds #navTop { right: auto; width: 420px; } body.ds #navBottom { left: var(--sp-3); right: auto; width: 420px; bottom: var(--sp-3); border-radius: var(--r-lg); } }
+body.ds.car #navTop { width: min(40vw, 560px); } body.ds.car #navBottom { width: min(40vw, 560px); }
+
+/* 降級：省電樣式、系統要求減少透明度、不支援毛玻璃 → 不透明卡片、不用模糊與重陰影；減少動態 */
+body.ds.lite #dsTop, body.ds.lite #mapCtl .ds-fab-group > button, body.ds.lite #navBottom { background: var(--c-surface-solid) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+body.ds.lite { --sh-1: 0 1px 2px rgba(0,0,0,.2); --sh-2: 0 1px 2px rgba(0,0,0,.2); --sh-3: 0 -1px 2px rgba(0,0,0,.2); }
+@media (prefers-reduced-transparency: reduce) { #dsTop, body.ds #mapCtl .ds-fab-group > button, body.ds #navBottom { background: var(--c-surface-solid) !important; backdrop-filter: none !important; } }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { #dsTop, body.ds #mapCtl .ds-fab-group > button, body.ds #navBottom { background: var(--c-surface-solid); } }
+@media (prefers-reduced-motion: reduce) { body.ds *, body.ds *::before { transition: none !important; animation: none !important; } }
+
+/* 起點已設定：只顯示一行；點一下展開（ui-shell.js） */
+body.ds .ds-od-from.set:not(.editing) #from, body.ds .ds-od-from.set:not(.editing) #myLoc, body.ds .ds-od-from.set:not(.editing) #fromResult { display: none; }
+body.ds .ds-od-from.set:not(.editing) #fromInfo { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+body.ds .ds-od-from.set:not(.editing) #fromInfo::after { content: '更改'; margin-left: auto; color: var(--c-primary); font-size: var(--fs-xs); padding-left: 8px; }
+body.ds .ds-od-to label, body.ds .ds-od-from label { display: inline-block; }
+body.ds .ds-od-to .hint, body.ds .ds-od-from .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 導航中的地圖署名：放在剩餘資訊卡上方（舊規則設了 top，與新的 bottom 同時存在會被拉成一整條） */
+body.ds.navigating #osmAttr { top: auto; bottom: calc(170px + env(safe-area-inset-bottom)); left: var(--sp-3); right: auto; height: auto; }
+@media (min-width: 900px) { body.ds.navigating #osmAttr { bottom: 4px; left: auto; right: 4px; } }
+
+/* ===== v1.13 店家地點搜尋（js/poi.js）===== */
+#poiChips { position: fixed; z-index: 24; top: calc(var(--sp-3) + var(--tap) + 16px + env(safe-area-inset-top)); left: var(--sp-3); right: var(--sp-3); display: flex; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; padding: 2px 2px 6px; }
+#poiChips::-webkit-scrollbar { display: none; }
+#poiChips button { width: auto; margin: 0; flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 18px; background: var(--c-surface-solid) !important; color: var(--c-text); font-size: var(--fs-xs); font-weight: 500; box-shadow: var(--sh-1, 0 1px 3px rgba(0,0,0,.18)); }
+#poiChips button .ic { color: var(--c-primary); }
+body.has-dest #poiChips, body.ds.navigating #poiChips, body.poi-mode #poiChips { display: none; }
+@media (max-width: 899px) { body.ds:not(.has-dest):not(.poi-mode):not(.navigating) #mapCtl .ds-fab-group.top { top: calc(var(--sp-3) + var(--tap) + 64px + env(safe-area-inset-top)); } }
+@media (min-width: 900px) { #poiChips { right: auto; width: 380px; flex-wrap: wrap; overflow: visible; } body.ds:not(.has-dest):not(.poi-mode) #panel { top: calc(170px + env(safe-area-inset-top)); max-height: calc(100dvh - 186px); } }
+
+/* 下拉：地點／道路分區 */
+.ds-results .po-sec { min-height: 0 !important; padding: 8px 16px 4px !important; font-size: var(--fs-xs) !important; font-weight: 600; color: var(--c-text-2); background: var(--c-surface-2); cursor: default; }
+.ds-results .po-sec:hover { background: var(--c-surface-2) !important; }
+.ds-results .po-sug { display: flex; align-items: center; gap: var(--sp-3); cursor: pointer; }
+.po-ic { width: 32px; height: 32px; border-radius: 50%; background: var(--c-primary-tint); color: var(--c-primary); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.po-t { display: flex; flex-direction: column; min-width: 0; flex: 1; } .po-t b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.po-t small { color: var(--c-text-2); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.po-all b { color: var(--c-primary); }
+.po-open { display: inline-block; font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 8px; line-height: 18px; }
+.po-open.open { color: var(--c-good); background: color-mix(in srgb, var(--c-good) 14%, transparent); }
+.po-open.closing { color: var(--c-slow); background: color-mix(in srgb, var(--c-slow) 16%, transparent); }
+.po-open.closed { color: var(--c-jam); background: color-mix(in srgb, var(--c-jam) 12%, transparent); }
+
+/* 結果清單（面板） */
+#poiList:empty { display: none; } body:not(.poi-mode) #poiList { display: none; }
+body.poi-mode #dsQuick, body.poi-mode #dsPlan { display: none !important; }
+.po-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; position: sticky; top: 0; background: var(--c-surface-solid); z-index: 1; }
+.po-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); }
+.po-cnt { font-size: var(--fs-xs); color: var(--c-text-3); }
+.po-filter { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; }
+.po-list { list-style: none; margin: 0; padding: 0; }
+.po-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-1); border-bottom: 1px solid var(--c-border); cursor: pointer; }
+.po-row.sel { background: var(--c-primary-tint); border-radius: var(--r-sm); }
+.po-row .po-addr { color: var(--c-text-3); } .po-row .po-more { color: var(--c-primary); }
+.po-num { width: 24px; height: 24px; border-radius: 50%; background: var(--c-jam); color: #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.po-row.sel .po-num { background: var(--c-primary); }
+.po-go { width: auto; margin: 0; flex-shrink: 0; display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-width: 52px; min-height: 48px; padding: 4px; border-radius: var(--r-sm); background: var(--c-primary-tint) !important; color: var(--c-primary); font-size: 11px; }
+.po-note, .po-src { font-size: var(--fs-xs); margin: var(--sp-2) 0; }
+
+/* 地圖標記 */
+.po-mk, .po-cl { cursor: pointer; }
+.po-pin { fill: #C5221F; stroke: #fff; stroke-width: 2; } .po-mk.sel .po-pin { fill: var(--c-primary); }
+.po-mk text { fill: #fff; font-size: 11px; font-weight: 700; pointer-events: none; } .po-mk.sel text { font-size: 13px; }
+.po-mk text.po-lbl { fill: var(--c-text); font-size: 12px; font-weight: 600; paint-order: stroke; stroke: var(--c-surface-solid); stroke-width: 3px; }
+.po-cl-c { fill: var(--c-surface-solid); stroke: #C5221F; stroke-width: 3; } .po-cl text { fill: #C5221F; font-size: 12px; font-weight: 700; pointer-events: none; }
+
+/* 地點詳細卡 */
+#poiCard { position: absolute; z-index: 7; left: 50%; transform: translateX(-50%); bottom: calc(116px + env(safe-area-inset-bottom)); width: min(380px, calc(100vw - 24px)); max-height: 60dvh; overflow-y: auto; padding: var(--sp-3) var(--sp-4); background: var(--c-surface-solid); color: var(--c-text); border-radius: var(--r-md); box-shadow: var(--sh-2); font-size: var(--fs-sm); }
+#poiCard[hidden] { display: none; }
+#poiCard p { margin: 6px 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; } #poiCard p .ic { color: var(--c-text-3); }
+#poiCard a { color: var(--c-primary); word-break: break-all; }
+.po-c-title { display: flex; flex-direction: column; min-width: 0; } .po-c-title b { font-size: var(--fs-md); } .po-c-title small { color: var(--c-text-2); font-size: var(--fs-xs); }
+.po-c-act { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); } .po-c-act button { width: auto; margin: 0; flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+body.ds .ds-btn-1 { min-height: 44px; border-radius: 14px; background: var(--c-primary) !important; color: var(--c-on-primary); }
+body.ds .ds-btn-1:hover { background: var(--c-primary-strong) !important; }
+body.ds.navigating #poiCard { display: none; }
+@media (min-width: 900px) { #poiCard { left: auto; right: 80px; transform: none; bottom: var(--sp-5); } }
+/* 地圖上可點的標記（舊規則讓 #routeSvg 的 path／circle 不接收滑鼠；店家標記與道路事件標記要接收） */
+#routeSvg .po-mk path, #routeSvg .po-cl circle, #routeSvg .ds-ev circle { pointer-events: auto; cursor: pointer; }

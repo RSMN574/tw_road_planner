@@ -14,7 +14,7 @@ const OPS = {
   route: q => engine.route(q), transit: q => engine.transit(q), multimodal: q => engine.multimodal(q),
   geocode: q => engine.geocode(q), reverse: q => engine.reverse(q), nearbyRoads: q => engine.nearbyRoads(q),
   osmLoad: cfg => osm.loadOsm(cfg), osmReloadIfChanged: () => (osm.osmReloadIfChanged() ? osm.osmInfo() : null), osmWarmup: m => osm.osmWarmup(m || []),
-  osmRoute: q => osm.osmRoute(q), osmNearest: q => osm.osmNearest(q), osmSearch: q => osm.osmSearch(q), osmTile: q => osm.osmTile(q), osmBuildingTile: q => osm.osmBuildingTile(q), osmTransitPlan: q => osm.osmTransitPlan(q), osmTransitStatus: () => osm.osmTransitStatus(), osmTrafficEvents: q => osm.osmTrafficEvents(q),
+  osmRoute: q => osm.osmRoute(q), osmNearest: q => osm.osmNearest(q), osmSearch: q => osm.osmSearch(q), osmTile: q => osm.osmTile(q), osmBuildingTile: q => osm.osmBuildingTile(q), osmTransitPlan: q => osm.osmTransitPlan(q), osmTransitStatus: () => osm.osmTransitStatus(), osmTrafficEvents: q => osm.osmTrafficEvents(q), osmPoiSearch: q => osm.osmPoiSearch(q), osmPoiNearby: q => osm.osmPoiNearby(q), osmPoiDetail: q => osm.osmPoiDetail(q), osmPoiCategories: () => osm.osmPoiCategories(),
   ping: () => 'pong'
 };
 

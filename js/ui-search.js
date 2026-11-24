@@ -1,5 +1,5 @@
 // ui-search.js
-import { State } from './state.js';
+import { Hooks, State } from './state.js';
 import { findNearestNode, parseCoordInput } from './graph-core.js';
 import { lonLatToWorld } from './geo.js';
 import { showStatus } from './ui-panels.js';
@@ -50,9 +50,17 @@ export function setupSearch(inputId, resultId, onPick) {
     if (osmOn()) {                                   // 全台 OSM：問伺服器（同名道路依離地圖中心的距離排序）
       State.searchTimer = setTimeout(async () => {
         const my = (State.searchSeq = (State.searchSeq || 0) + 1);
-        let hits; try { hits = await osmSearch(q); } catch (e) { if (my === State.searchSeq) result.innerHTML = `<div style="color:#dc2626">⚠ 搜尋失敗：${esc(e.message)}</div>`; return; }
+        // v1.13：店家地點（poi.js）與道路同時查；地點放上面、道路放下面
+        const pp = Hooks.poiSearch ? Hooks.poiSearch(q).catch(() => null) : Promise.resolve(null);
+        let hits; try { hits = await osmSearch(q); } catch (e) { hits = null; if (!Hooks.poiSearch && my === State.searchSeq) { result.innerHTML = `<div style="color:#dc2626">⚠ 搜尋失敗：${esc(e.message)}</div>`; return; } }
+        const pd = await pp;
         if (my !== State.searchSeq || input.value.trim() !== q) return;
-        result.innerHTML = hits.length ? '' : `<div style="color:#94a3b8">全台 OSM 道路沒有符合「${esc(q)}」的路名</div>`;
+        result.innerHTML = '';
+        const gotPoi = Hooks.poiSuggest ? Hooks.poiSuggest(result, pd, whichOf(inputId), q) : false;
+        if (!hits) { if (!gotPoi) result.innerHTML = `<div style="color:#dc2626">⚠ 搜尋失敗</div>`; return; }
+        if (gotPoi && hits.length) { const h = document.createElement('div'); h.className = 'po-sec'; h.textContent = '道路'; result.appendChild(h); }
+        if (!hits.length && !gotPoi) result.innerHTML = `<div style="color:#94a3b8">沒有符合「${esc(q)}」的地點或路名</div>`;
+        if (gotPoi) hits = hits.slice(0, 5);
         for (const h of hits) {
           const div = document.createElement('div');
           div.innerHTML = `${esc(h.name)} <small style="color:#64748b">${esc(osmHwLabel(h.highway))}${h.km || h.km === 0 ? `・${h.km} km` : ''}</small>`;

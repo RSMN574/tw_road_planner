@@ -10,6 +10,8 @@ import { HIGHWAYS } from './osm/tags.mjs';
 import { PROFILES, PROFILE_IX, ST, access4 } from './osm/access.mjs';
 import { ApiError } from './http-util.mjs';
 import { readBuildings, buildingTile, SRC as BLD_SRC } from './osm/buildings.mjs';
+import { loadPois, searchPois, nearbyPois, poiDetail, findPoi } from './osm/poi.mjs';
+import { CATEGORIES as POI_CATS } from './osm/poi-categories.mjs';
 import { transitConfigure, transitPlan, transitStatus, transitPrepare } from './transit-engine.mjs';
 import { mapEvents, overlayAt, eventActive } from './traffic/events.mjs';
 
@@ -32,11 +34,16 @@ function trafficOverlay(at) {
 export function osmTrafficEvents(q = {}) {
   need(); const T = loadTraffic(), at = departMs(q.at), o = trafficOverlay(at), hit = new Map((o ? o.hits : []).map(h => [h.eventId, h]));
   return { available: T.events.length > 0, fetchedAt: T.fetchedAt ? new Date(T.fetchedAt).toISOString() : null, source: T.source || null, at: new Date(at).toISOString(),
-    events: T.events.map(e => ({ ...e, active: eventActive(e, at), mapped: hit.get(e.eventId) || null })), skipped: o ? o.skipped : null,
+    // bbox=西,南,東,北（地圖圖層用）：只回這個範圍內、現在有效的事件，欄位精簡、最多 400 筆
+    events: (() => { const bb = q.bbox ? String(q.bbox).split(',').map(Number) : null; if (bb && (bb.length !== 4 || bb.some(x => !Number.isFinite(x)))) throw new ApiError(400, 'BAD_PARAM', 'bbox 需要「西,南,東,北」');
+      if (!bb) return T.events.map(e => ({ ...e, active: eventActive(e, at), mapped: hit.get(e.eventId) || null }));
+      const inB = e => e.geometry && e.geometry.flat().some(([lo, la]) => lo >= bb[0] && lo <= bb[2] && la >= bb[1] && la <= bb[3]);
+      return T.events.filter(e => eventActive(e, at) !== false && inB(e)).slice(0, 400).map(e => { const g = e.geometry.flat(), c = g.reduce((a, p) => [a[0] + p[0] / g.length, a[1] + p[1] / g.length], [0, 0]);
+        return { eventId: e.eventId, type: e.type, typeCode: e.typeCode, title: e.title, description: e.description, severity: e.severity, severityLabel: e.severityLabel, at: [+c[1].toFixed(6), +c[0].toFixed(6)], area: g.length > 1, roads: e.affectedRoad.map(r => r.road), startTime: e.startTime, endTime: e.endTime, source: e.source, mapped: !!hit.get(e.eventId) }; }); })(), skipped: o ? o.skipped : null,
     note: T.events.length ? '只用 TDX 實際提供的事件；沒有座標的不推測位置（列出但不影響路線）' : '沒有道路事件資料：執行 node tools/traffic-sync.mjs（需要 TDX 金鑰）' };
 }
 
-let G = null, R = null, info = { loaded: false, reason: 'OSM 道路圖尚未載入' }, cfgRef = null, sig = '', names = null, B = null, bFile = null;
+let G = null, R = null, info = { loaded: false, reason: 'OSM 道路圖尚未載入' }, cfgRef = null, sig = '', names = null, B = null, bFile = null, P = null, pFile = null;
 const MODES = { car: 'car', heavy: 'heavy', moto: 'moto', bike: 'bike', walk: 'foot', foot: 'foot' };
 const LABEL = { fastest: '最快', shortest: '最短距離' };
 const ESTIMATE = '依速限與道路類別推估（含路口與轉彎延遲，未含即時路況）';
@@ -47,9 +54,9 @@ function currentFiles(cfg) {
   const dir = cfg.osm.dir, cur = path.join(dir, 'current.json');
   if (!existsSync(cur)) return null;
   const c = JSON.parse(readFileSync(cur, 'utf8')), gf = path.join(dir, c.graph), d = path.dirname(gf);
-  return { cur, graph: gf, alt: path.join(d, 'osm-alt.bin'), manifest: path.join(d, 'manifest.json'), buildings: path.join(d, 'osm-buildings.twbld'), current: c };
+  return { cur, graph: gf, alt: path.join(d, 'osm-alt.bin'), manifest: path.join(d, 'manifest.json'), buildings: path.join(d, 'osm-buildings.twbld'), poi: path.join(d, 'osm-poi.json.gz'), current: c };
 }
-const fileSig = f => f ? [f.cur, f.graph, f.alt, f.buildings].filter(existsSync).map(x => `${x}:${statSync(x).mtimeMs}:${statSync(x).size}`).join('|') : '';
+const fileSig = f => f ? [f.cur, f.graph, f.alt, f.buildings, f.poi].filter(existsSync).map(x => `${x}:${statSync(x).mtimeMs}:${statSync(x).size}`).join('|') : '';
 export function loadOsm(cfg) {
   cfgRef = cfg; const t0 = Date.now(); transitConfigure(cfg);
   if (!cfg.osm || !cfg.osm.enabled) { info = { loaded: false, disabled: true, reason: 'OSM 道路圖已停用（OSM=0）' }; G = R = null; names = major = null; return info; }
@@ -59,11 +66,13 @@ export function loadOsm(cfg) {
   if (existsSync(f.alt)) { try { const h = readAltHead(f.alt).head; if (!h.meta || !h.meta.graphCreated || h.meta.graphCreated === G.head.created) { alt = altLoader(f.alt); altInfo = Object.keys(h.profiles); } } catch { alt = null; } }
   R = new OsmRouter(G, { alt });
   const man = existsSync(f.manifest) ? JSON.parse(readFileSync(f.manifest, 'utf8')) : {};
-  sig = fileSig(f); B = null; bFile = existsSync(f.buildings) ? f.buildings : null;   // 建築檔第一次用到時才載入（約 70 MB）
+  sig = fileSig(f); B = null; P = null; pFile = existsSync(f.poi) ? f.poi : null;   // 店家地點：預熱時載入（沒預熱就第一次查詢時；約 2 秒、堆積約 115 MB）
+  bFile = existsSync(f.buildings) ? f.buildings : null;   // 建築檔第一次用到時才載入（約 70 MB）
   const bRep = bFile && existsSync(path.join(path.dirname(f.graph), 'buildings-report.json')) ? JSON.parse(readFileSync(path.join(path.dirname(f.graph), 'buildings-report.json'), 'utf8')) : null;
   info = { loaded: true, dir: path.relative(cfg.dataDir, path.dirname(f.graph)).split(path.sep).join('/'), vertices: G.V.n, edges: G.E.n, ways: G.W.n, dataTimestamp: f.current.dataTimestamp || G.header?.replication?.timestamp || null,
     builtAt: f.current.builtAt || man.builtAt || null, source: man.source || null, sourceMd5: man.sourceMd5 || null, sourceMd5Verified: !!man.sourceMd5Verified, alt: altInfo, modes: Object.keys(MODES).filter(m => m !== 'foot'), loadMs: Date.now() - t0,
     version: `${f.current.dir}|${f.current.builtAt || ''}`,
+    poi: pFile ? { available: true, version: String(Math.round(statSync(pFile).mtimeMs)) } : { available: false, reason: '沒有 osm-poi.json.gz；用 npm run osm:poi 建立' },
     buildings: bFile ? { available: true, count: bRep ? bRep.count : null, heightSourcePct: bRep ? bRep.heightSourcePct : null, version: String(Math.round(statSync(bFile).mtimeMs)), minZoom512: 15 } : { available: false, reason: '沒有 osm-buildings.twbld；用 npm run osm:buildings 建立' } };
   return info;
 }
@@ -76,6 +85,7 @@ export function osmWarmup(modes = []) {
   if (modes.length) { R.edgeIndex(); R.turnGeo(); }
   try { const t = Date.now(), ok = transitPrepare(R); if (ok) console.log(`   大眾運輸轉乘預先建立：${Date.now() - t} ms`); } catch (e) { /* 沒有大眾運輸資料：第一次查詢時回 503 */ }
   try { loadTraffic(); trafficOverlay(Date.now()); } catch { /* 沒有道路事件 */ }
+  try { if (pFile && !P) { const t = Date.now(); P = loadPois(pFile); console.log(`   店家地點索引：${P.n} 筆，${Date.now() - t} ms`); } } catch (e) { console.warn('   店家地點載入失敗：' + e.message); }
   return Date.now() - t0;
 }
 const need = () => { if (!R) throw new ApiError(503, 'OSM_NOT_LOADED', info.reason || '伺服器沒有載入 OSM 道路圖'); };
@@ -115,7 +125,7 @@ export function osmRoute(q) {
     out.push({ key: kind, label: LABEL[kind], ok: true, distanceM: r.distanceM, durationS: r.durationS, driveS: r.driveS, delayS: r.delayS, estimate: ESTIMATE,
       geometry: r.coords.map(([lo, la]) => [r6(lo), r6(la)]), roads: r.roads, ways: r.ways.map(w => ({ name: w.name, ref: w.ref, highway: w.highway, m: w.m, limitKmh: w.limitKmh, limitSrc: w.limitSrc })),
       steps: bool(q.steps, true) ? r.steps.map(s => ({ ...s, at: s.at ? [r6(s.at[0]), r6(s.at[1])] : undefined })) : undefined,
-      timing: r.timing, ferries: r.ferries, warnings: r.warnings, snap: r.snap, conditionalRestrictionsIgnored: r.conditionalRestrictionsIgnored, conditionalRestrictions: r.conditionalRestrictions, events: r.events && r.events.length ? r.events : undefined, _arcs: r.arcs.join(',') });
+      timing: r.timing, signals: r.signals, ferries: r.ferries, warnings: r.warnings, snap: r.snap, conditionalRestrictionsIgnored: r.conditionalRestrictionsIgnored, conditionalRestrictions: r.conditionalRestrictions, events: r.events && r.events.length ? r.events : undefined, _arcs: r.arcs.join(',') });
   }
   for (const o of out) delete o._arcs;
   const notes = []; if (kinds.length === 1 && bool(alt, true)) notes.push(`直線距離 ${Math.round(crowKm)} km：長距離只提供最快路線（最短距離路線通常繞山路、小路）`);
@@ -142,6 +152,29 @@ export function osmTransitPlan(q) {
   return transitPlan({ from, to, departMs: departMs(q.depart), modes, maxWalkM: q.maxWalk != null && q.maxWalk !== '' ? num(q.maxWalk, 'maxWalk', 100, 3000) : undefined, maxTransfers: q.maxTransfers != null && q.maxTransfers !== '' ? num(q.maxTransfers, 'maxTransfers', 0, 5) : undefined, walkGeometry: bool(q.walkGeometry, true) }, R);
 }
 export const osmTransitStatus = () => transitStatus();
+
+// ---------- 店家地點（POI；osm/poi.mjs）----------
+const needPoi = () => { need(); if (!pFile) throw new ApiError(404, 'NO_POI', '伺服器沒有店家地點資料（npm run osm:poi）'); if (!P) P = loadPois(pFile); return P; };
+// 沒有門牌的地點：補「附近道路」（最近的有名稱道路；只做前幾筆，標示是推出來的）
+function withRoad(list) { for (const r of list.slice(0, 20)) if (!r.address) { const c = R.snapCandidates(r.lat, r.lon, 'foot', { windowM: 40, maxM: 150 }).find(x => R.wayName(G.E.way[x.e])); if (c) r.nearRoad = R.wayName(G.E.way[c.e]); } return list; }
+const optNear = q => (q.near ? latLon(q.near, 'near') : null);
+export function osmPoiSearch(q) {
+  const X = needPoi(), s = String(q.q ?? '').trim(); if (!s && !q.category) throw new ApiError(400, 'MISSING_PARAM', '需要 q（店名、品牌或類別）或 category');
+  if (q.category && !POI_CATS[q.category]) throw new ApiError(400, 'BAD_PARAM', 'category 不認得（見 /api/v1/poi/categories）');
+  const bb = q.bbox ? String(q.bbox).split(',').map(Number) : null; if (bb && (bb.length !== 4 || bb.some(x => !Number.isFinite(x)))) throw new ApiError(400, 'BAD_PARAM', 'bbox 需要「西,南,東,北」');
+  const r = searchPois(X, { q: s, near: optNear(q), category: q.category || null, openNow: bool(q.openNow, false), limit: Math.min(30, Math.max(1, +q.limit || 15)), bbox: bb, now: q.at ? departMs(q.at) : Date.now() });
+  return { ...r, results: withRoad(r.results), source: '© OpenStreetMap contributors（ODbL）' };
+}
+export function osmPoiNearby(q) {
+  const X = needPoi(), [lat, lon] = latLon(q.lat != null ? { lat: q.lat, lon: q.lon } : q.at, 'lat/lon'); if (q.category && !POI_CATS[q.category]) throw new ApiError(400, 'BAD_PARAM', 'category 不認得');
+  const r = nearbyPois(X, { lat, lon, category: q.category || null, radiusKm: num(q.radius ?? 1000, 'radius', 50, 5000) / 1000, limit: Math.min(50, Math.max(1, +q.limit || 20)), openNow: bool(q.openNow, false) });
+  return { ...r, results: withRoad(r.results), source: '© OpenStreetMap contributors（ODbL）' };
+}
+export function osmPoiDetail(q) {
+  const X = needPoi(), i = findPoi(X, q.id); if (i < 0) throw new ApiError(404, 'POI_NOT_FOUND', '找不到這個地點（資料可能已更新）');
+  const d = poiDetail(X, i); return withRoad([d])[0];
+}
+export function osmPoiCategories() { const X = needPoi(); return { categories: Object.entries(POI_CATS).map(([code, c]) => ({ code, label: c.label, icon: c.icon, group: c.group, words: c.words, count: X.counts[code] || 0 })), total: X.n }; }
 
 // ---------- 最近的道路 ----------
 export function osmNearest(q) {

@@ -11,7 +11,7 @@ import * as engine from './engine.mjs';
 import * as osm from './osm-engine.mjs';
 
 export const OPS = ['route', 'transit', 'multimodal', 'geocode', 'reverse', 'nearbyRoads'];
-export const OSM_OPS = ['osmRoute', 'osmNearest', 'osmSearch', 'osmTile', 'osmBuildingTile', 'osmTransitPlan', 'osmTransitStatus', 'osmTrafficEvents'];          // 全台 OSM 道路圖（osm-engine.mjs）；沒有圖檔時回 503
+export const OSM_OPS = ['osmRoute', 'osmNearest', 'osmSearch', 'osmTile', 'osmBuildingTile', 'osmTransitPlan', 'osmTransitStatus', 'osmTrafficEvents', 'osmPoiSearch', 'osmPoiNearby', 'osmPoiDetail', 'osmPoiCategories'];          // 全台 OSM 道路圖（osm-engine.mjs）；沒有圖檔時回 503
 
 export function inlineBackend() {
   const be = { kind: 'inline', size: 0, dataInfo: engine.dataInfo, graphPack: engine.graphPack,

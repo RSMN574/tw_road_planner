@@ -63,6 +63,7 @@ export function render() {                       // 只重繪，不重跑 dijkst
   if (!State.base) { drawGrid(); return; }
   if (State.currentRoute) Hooks.drawRoute(State.currentRoute, false);
   else { drawGrid(); Hooks.drawWidthLayer(); Hooks.drawBus(); Hooks.drawUbike(); drawMarkers(); Hooks.drawInspect(); if (Hooks.drawTransitPlan) Hooks.drawTransitPlan(); if (Hooks.drawNav) Hooks.drawNav(); }
+  if (Hooks.drawExtra) Hooks.drawExtra();                       // v1.12：道路事件圖層等（ui-shell.js）
   commitScene();
   if (Hooks.syncMapUi) Hooks.syncMapUi();                       // 縮放層級、比例尺（map-view.js）
 }
@@ -106,7 +107,7 @@ export function drawMarkers() {
 export function drawGrid() {
   svg.innerHTML = '';
   const w = svg.clientWidth, h = svg.clientHeight;
-  let g = '<g stroke="#f1f5f9" stroke-width="1">';
+  let g = '<g class="bg-grid" stroke="#f1f5f9" style="stroke:var(--c-grid,#f1f5f9)" stroke-width="1">';   // v1.12：顏色跟主題（深色時不會是亮白格線）
   if (!State.base) {
     for (let x = 0; x <= w; x += 40) g += `<line x1="${x}" y1="0" x2="${x}" y2="${h}"/>`;
     for (let y = 0; y <= h; y += 40) g += `<line x1="0" y1="${y}" x2="${w}" y2="${y}"/>`;

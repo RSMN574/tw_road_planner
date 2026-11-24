@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1e293b">
+<meta name="theme-color" content="#1a73e8">
 <meta name="color-scheme" content="light dark">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<title>台中道路圖 · 路線搜尋（分檔 JSON 版）</title>
+<title>台灣通・導航</title>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -162,7 +162,7 @@
 
 <div id="offlineBar" hidden>目前離線：已載入的地圖與頁面仍可使用，TDX 即時資料與重新規劃需要網路</div>
 <div id="navUI" hidden>
-  <div id="navTop"><div id="navArrow">⬆</div><div class="txt"><div id="navDist">—</div><div id="navRoad"></div><div id="navThen"></div></div></div>
+  <div id="navTop" role="status" aria-live="polite"><div id="navArrow" aria-label="">⬆</div><div class="txt"><div id="navDist">—</div><div id="navRoad"></div><div id="navThen"></div></div></div>
   <div id="navChips"><span id="gpsChip" data-s="idle">GPS 未啟動</span><button id="navOrient" type="button">🧭 車頭朝上</button></div>
   <div id="navMsg" hidden></div>
   <button id="navRecenter" type="button" hidden>◎ 回到定位</button>
@@ -179,7 +179,7 @@
   <div id="navBottom">
     <div class="info"><div><small>剩餘距離</small><b id="navRem">—</b></div><div><small>預計抵達</small><b id="navEta">—</b></div><div><small>剩餘時間</small><b id="navLeft">—</b></div></div>
     <div class="note" id="navNote">時間為系統推估</div>
-    <div class="btns"><button id="navPause" type="button">⏸ 暫停</button><button id="navRepeat" type="button">🔁 重複</button><button id="navVoiceBtn" type="button">🔊 語音</button><button id="navEnd" type="button" class="danger">結束</button></div>
+    <div class="btns"><button id="navMore" type="button" aria-expanded="false" aria-label="更多：暫停、重複、語音">⋯ 更多</button><button id="navPause" type="button">⏸ 暫停</button><button id="navRepeat" type="button">🔁 重複</button><button id="navVoiceBtn" type="button">🔊 語音</button><button id="navEnd" type="button" class="danger">結束</button></div>
   </div>
 </div>
 

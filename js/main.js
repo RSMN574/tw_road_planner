@@ -24,6 +24,8 @@ import { tryFetchAll } from './loader.js';
 import { init as init_osm } from './osm.js';
 import { init as init_map_view, syncMapUi } from './map-view.js';
 import { init as init_transit_plan } from './transit-plan.js';
+import { init as init_ui_shell } from './ui-shell.js';
+import { init as init_poi } from './poi.js';
 import { syncControls } from './ui-events.js';
 
 // 低層模組需要呼叫高層函式時，透過 Hooks.xxx（避免循環 import）
@@ -45,6 +47,8 @@ init_tdx();
 init_osm();
 init_map_view();
 init_transit_plan();
+init_ui_shell();             // v1.12：UI 外殼（搜尋列、浮動按鈕、底部面板、路線卡）——搬動既有元素，最後執行
+init_poi();                  // v1.13：店家地點搜尋（下拉「地點」區、類別快捷、清單、標記、詳細卡）——要在外殼之後
 
 drawGrid();
 tryFetchAll();
