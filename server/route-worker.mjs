@@ -7,7 +7,7 @@ if (workerData && workerData.quiet) { console.info = () => {}; console.log = () 
 
 const OPS = {
   osmLoad: cfg => osm.loadOsm(cfg), osmReloadIfChanged: () => (osm.osmReloadIfChanged() ? osm.osmInfo() : null), osmWarmup: m => osm.osmWarmup(m || []),
-  osmRoute: q => osm.osmRoute(q), osmNearest: q => osm.osmNearest(q), osmSearch: q => osm.osmSearch(q), osmTile: q => osm.osmTile(q), osmBuildingTile: q => osm.osmBuildingTile(q), osmTransitPlan: q => osm.osmTransitPlan(q), osmTransitStatus: () => osm.osmTransitStatus(), osmTrafficEvents: q => osm.osmTrafficEvents(q), osmTrafficFlow: q => osm.osmTrafficFlow(q), osmPoiSearch: q => osm.osmPoiSearch(q), osmPoiNearby: q => osm.osmPoiNearby(q), osmPoiDetail: q => osm.osmPoiDetail(q), osmPoiCategories: () => osm.osmPoiCategories(),
+  osmRoute: q => osm.osmRoute(q), osmNearest: q => osm.osmNearest(q), osmSearch: q => osm.osmSearch(q), osmTile: q => osm.osmTile(q), osmBuildingTile: q => osm.osmBuildingTile(q), osmTransitPlan: q => osm.osmTransitPlan(q), osmTransitStatus: () => osm.osmTransitStatus(), osmTransitStops: q => osm.osmTransitStops(q), osmTransitStop: q => osm.osmTransitStop(q), osmTransitRoute: q => osm.osmTransitRoute(q), osmTrafficEvents: q => osm.osmTrafficEvents(q), osmTrafficFlow: q => osm.osmTrafficFlow(q), osmPoiSearch: q => osm.osmPoiSearch(q), osmPoiNearby: q => osm.osmPoiNearby(q), osmPoiDetail: q => osm.osmPoiDetail(q), osmPoiCategories: () => osm.osmPoiCategories(),
   ping: () => 'pong'
 };
 

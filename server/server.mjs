@@ -37,6 +37,15 @@ export function createApp(cfg, opts = {}) {
   const placesLive = async () => { if (liveFn || liveTried) return liveFn; liveTried = true; try { const { resolveToken } = await import('../tools/_tdx.mjs'), tk = opts.placesFetch ? { getToken: true } : resolveToken(); if (!tk.getToken) return null;
     const { createLive } = await import('./places/tdx-places.mjs'), fetchJson = opts.placesFetch || (await import('./transit/snapshot.mjs')).createTdxFetcher({ upstream: cfg.tdx.upstream, getToken: tk.getToken });
     liveFn = createLive({ fetchJson, ttlMs: cfg.placesLiveTtlS * 1000 }); } catch { liveFn = null; } return liveFn; };
+  // v1.19 公車即時（BusRealtimeService）：主執行緒負責向 TDX 取即時資料（I/O），站牌與路線的靜態資料由計算執行緒提供
+  let busRt = null, busRtTried = false; const rtCache = { v: null };
+  const busRealtime = async () => { if (busRt || busRtTried) return busRt; busRtTried = true; try {
+      const { resolveToken } = await import('../tools/_tdx.mjs'), tk = opts.busFetch ? { getToken: true } : resolveToken(); if (!tk.getToken) return null;
+      const { createRealtimeCache } = await import('./transit/realtime-cache.mjs'), { createBusRealtime } = await import('./transit/bus-realtime.mjs');
+      const fetchJson = opts.busFetch || (await import('./transit/snapshot.mjs')).createTdxFetcher({ upstream: cfg.tdx.upstream, getToken: tk.getToken });
+      rtCache.v = createRealtimeCache({ maxCallsPerMin: cfg.realtime.maxCallsPerMin, now: opts.now }); busRt = createBusRealtime({ fetchJson, cache: rtCache.v, now: opts.now });
+    } catch { busRt = null; } return busRt; };
+  const minute = () => String(Math.floor((opts.now ? opts.now() : Date.now()) / 60e3) * 60e3);
   const osmCall = async (name, q, fn) => {
     const key = 'osm:' + name + '|' + osmVer() + '|' + JSON.stringify(Object.keys(q).sort().map(k => [k, q[k]]));
     const hit = cache.get(key); if (hit) { counters.cacheHits++; return { data: hit, cached: true }; }
@@ -50,6 +59,14 @@ export function createApp(cfg, opts = {}) {
     // v1.11 全台多運具大眾運輸（台鐵、高鐵、捷運、輕軌、公車；RAPTOR）：出發時間沒給＝現在（換成 1 分鐘一格，快取鍵才正確）
     'GET /api/v1/transit/plan': q => osmCall('transitPlan', q.depart === undefined || q.depart === '' || q.depart === 'now' ? { ...q, depart: String(Math.floor(Date.now() / 60e3) * 60e3) } : q, engine.osmTransitPlan),
     'GET /api/v1/transit/status': () => engine.osmTransitStatus().then(d => ({ data: d })),
+    // v1.19 公車站牌（畫面範圍）、站牌即時到站、路線車輛位置
+    'GET /api/v1/transit/stops': q => osmCall('transitStops', { bbox: q.bbox }, engine.osmTransitStops),
+    'GET /api/v1/transit/stop': async q => { const info = (await osmCall('transitStop', { uid: q.uid, at: minute() }, engine.osmTransitStop)).data, rt = await busRealtime();
+      if (!rt) return { data: { stop: info.stop, routes: info.routes.map(r => ({ ...r, rt: { state: r.scheduled && r.scheduled.next && r.scheduled.next.length ? 'scheduled' : 'nodata', label: '伺服器沒有 TDX 金鑰，無法取得即時到站', scheduled: r.scheduled } })), realtime: false, fetchedAt: Date.now() } };
+      return { data: { ...(await rt.stopArrivals(info)), realtime: true } }; },
+    'GET /api/v1/transit/vehicles': async q => { const ri = (await osmCall('transitRoute', { pattern: q.pattern }, engine.osmTransitRoute)).data, rt = await busRealtime();
+      if (!rt) return { data: { route: ri, vehicles: [], shape: null, stops: ri.stops, realtime: false, note: '伺服器沒有 TDX 金鑰，無法取得公車即時位置', fetchedAt: Date.now() } };
+      return { data: { ...(await rt.routeVehicles(ri)), realtime: true } }; },
     // v1.13 店家地點（OSM POI）：搜尋、附近、單一地點、類別
     'GET /api/v1/poi/search': q => osmCall('poiSearch', { ...q, at: String(Math.floor(Date.now() / 60e3) * 60e3) }, engine.osmPoiSearch),
     'GET /api/v1/poi/nearby': q => osmCall('poiNearby', { ...q, _t: String(Math.floor(Date.now() / 60e3)) }, engine.osmPoiNearby),
@@ -77,7 +94,8 @@ export function createApp(cfg, opts = {}) {
     return { status: o.loaded ? 'ok' : 'loading', version: pkg.version, uptimeS: Math.round((Date.now() - started) / 1000),
       osm: o,
       tdx: { configured: tdx.configured, source: src, proxyBase: 'tdx' }, traffic: { pollMin: cfg.traffic ? cfg.traffic.pollMin : 0 }, compute: engine.stats(),
-      cache: { entries: cache.size, hits: counters.cacheHits, sharedInflight: dedupe.shared, static: stat.stats(), tdx: tdx.stats } };
+      cache: { entries: cache.size, hits: counters.cacheHits, sharedInflight: dedupe.shared, static: stat.stats(), tdx: tdx.stats },
+      realtime: rtCache.v ? { ...rtCache.v.stats, entries: rtCache.v.size, callsLastMin: rtCache.v.callsLastMin(), maxCallsPerMin: cfg.realtime.maxCallsPerMin } : null };
   }
   const corsHeaders = req => {
     const o = req.headers.origin; if (!o || !cfg.corsOrigins.length) return {};

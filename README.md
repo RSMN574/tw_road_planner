@@ -606,3 +606,29 @@ npm run test:v111        # 這一版新增的測試（也已加入 npm test）
 **伺服器**：`backend.mjs`、`route-worker.mjs`、`express-mount.mjs` 只剩 OSM；`/api/v1/health` 改為 `status`（OSM 載入狀態）、`osm`、`tdx`、`traffic.pollMin`、`compute`、`cache`（不再有 `graph`、`files`、`data`）；API 的 `meta` 一律帶 `osmVersion`。Dockerfile 一併複製 `tools/`（即時路況、停車即時資料、大眾運輸同步在執行時會用到；v1.15–v1.17 漏了這一項）。
 
 **測試**：刪除只測舊路網的測試（e2e、ui、t12_fresh、net、metro、vehicle、moa、moa_random、mode、server-workers、metro-transit、metro-json、ubike-transit、bench-transit、browser、browser-ubike、browser-metro、bench-browser）。`nav`、`nav-eta`、`nav-perf` 改用 `test/osm-route-fixture.mjs`：產生與伺服器 `describe()` 相同格式的合成路線（每段時間與路口延遲照伺服器公式、參數表共用），再交給網頁真正的 `osmRouteObj()`；偏航後的伺服器重新規劃在 `nav-eta` 用模擬回應、在 `via.mjs` 用真的伺服器。`server.mjs` 改測舊 API 回 410、`data/` 不公開、新的 health。`npm test` 現在是 18 組，全部通過；`browser-osm.cjs` 已更新但這個環境沒有 Playwright，**沒有實際跑過**。
+
+## v1.19.0：公車即時（站牌到站、公車位置）
+
+需求第十二節的公車部分（規劃與 API 查證見 `docs/design/REALTIME_SPEED_TELEMETRY_PLAN.md`）。
+
+- **地圖上的公車站牌**：放大到 z15.5 以上顯示（圖層選單可關閉）；同名但不同 StopUID 的站牌各自一個點。
+- **點站牌 → 即時到站卡**：每個路線型態一列（**SubRouteUID＋Direction**；同名的副線、延駛線、去回程各自分開），顯示往哪裡、即時預估（下兩班、車號、末班車）、時刻表的下兩班與末班、資料來源與更新時間。狀態分開標示：即時、預定時刻（非即時）、過期（資料超過 180 秒）、尚無資料、尚未發車（附業者預告的發車時間）、交管不停靠、末班已過、今日未營運、終點站、即時資料暫時無法取得。**沒有即時資料不會被當成今天沒有營運**——有時刻表就顯示時刻表。TDX 沒有「班次取消」欄位，所以不會顯示班次取消。
+- **點路線 → 公車位置**：選取的路線畫出 TDX 線形，公車位置（A1）**吸附到線形上**（離線形 60 m 以上就顯示原始 GPS 並標示距離，不硬吸附）；方向箭頭用 TDX 的方位角；車號、速度、GPS 時間、目前站（A2 進站／離站）、下一站與到站時間（同一台車的 N1）。沒有 A2 時下一站依線形上的位置推算並標示。GPS 超過 180 秒標「位置已過期」（灰色），超過 10 分鐘不顯示。**不做移動動畫**，位置只在新資料來時更新。
+- **更新與用量**：只抓有人在看的站牌（`$filter=StopUID`）與路線（`$filter=RouteUID`），不輪詢整個縣市；伺服器快取 15～20 秒（線形 6 小時）、相同請求合併、逾時 9 秒、失敗後 10 秒內不重打（有舊資料就回舊資料並標示）、每分鐘最多 `REALTIME_MAX_CALLS_PER_MIN`（預設 300）次。網頁在卡片開著時才每 30 秒（到站）／20 秒（車輛）更新，分頁在背景或導航中不更新。車輛圖層在畫面沒有移動時只更新自己那一層。
+- **修正**：`eta-store` 以 RouteUID 找到的到站資料若屬於另一個子路線，不再拿來用（之前可能把不同子路線的 ETA 混在一起；這個模組在 v1.19 之前沒有接上任何 API，所以沒有實際影響過畫面）。
+- **API**：`GET /api/v1/transit/stops?bbox=西,南,東,北`（約 4 km 見方以內）、`GET /api/v1/transit/stop?uid=StopUID`、`GET /api/v1/transit/vehicles?pattern=路線型態代碼`；`/api/v1/health` 多了 `realtime`（快取與每分鐘呼叫數）。
+- **新增**：`server/transit/realtime-cache.mjs`（RealtimeDataCache）、`server/transit/bus-realtime.mjs`（BusRealtimeService）、`server/transit/stop-info.mjs`、`js/bus-live.js`、`test/bus-realtime.mjs`。
+- **實測（2026-11-25 傍晚，台中，真實 TDX）**：臺中車站（臺灣大道，TXG11020）38 個路線型態：即時 11、尚未發車 16、末班已過 8、終點站 2、尚無資料 1；14、14延、14副、14副2 各自分開。101 往敦化后庄七街口：2 輛，皆吸附到線形（離線形 7～11 m），下一站與 ETA 正確顯示。82 去程的一台車停在轉運站內、離線形 95 m → 顯示原始 GPS。台中 A1 的 GPS 時間實測約落後 20～120 秒。
+- **尚未完成**：捷運／輕軌／台鐵即時（G 期）、導航速度與速限（H 期）、匿名交通資料（I、J 期）；台灣好行、公路客運的即時路徑已接上但**沒有用真實資料測過**。
+
+## v1.20.0：導航速度與道路速限（SpeedLimitService）
+
+需求第十三節。
+
+- **目前速度**（`js/speed-meter.js`）：用 GPS 濾波後的定位（`gps-filter.js` 現在會標示速度來源：裝置的都卜勒速度或濾波後的位移）。單筆不合理的速度（> 200 km/h 或加減速度 > 7 m/s²）不採用，連續 3 筆一致才接受；位移估速時，位移小於定位精度一半就當成原地飄移（0）；EMA 平滑（都卜勒 2 秒、位移 4 秒）；連續 2 筆低於 3 km/h 顯示 0。品質：良好（都卜勒且精度 ≤ 10 m）／普通／精度不足（> 30 m、訊號弱、位移估速且 > 15 m；速度變淡並寫「僅供參考」）／訊號中斷（6 秒沒有定位，不顯示速度）。
+- **速限**（`server/osm/speed-limit.mjs`）：每一段依行駛方向給速限、來源、可信度與版本。優先順序：TDX 官方（路況 v2 路段的 SpeedLimit，經即時路況的路段對應找到有向邊；只對主線，不套到匝道）＞ OSM 時段速限（條件成立時）＞ OSM `maxspeed:forward／backward`／`maxspeed`（照標誌登錄的可信度 high，其他 medium）＞ OSM 區域代碼（法定速限，low）＞ **速限未知**。另外標示可變速限、建議速限、各車道不同、OSM 與官方不一致（採官方）。步行不適用。**道路類別的推估值只用在路線時間，不再顯示成速限**（之前步驟裡的「速限未知（推估 50 km/h）」已改成「速限未知」）。OSM 的大貨車速限（`maxspeed:hgv`）不使用（本系統沒有大貨車模式）。
+- **新工具** `npm run osm:speedlimits`：從 PBF 抽出道路圖沒存的標籤（時段、可變、建議、各車道、依標誌登錄）寫到道路圖資料夾的 `speed-extra.json`（全台 11 秒；一鍵安裝會一起做）。
+- **導航面板**：目前速度、速限標誌（或「速限未知」虛線圈）與來源、路名、GPS 品質與精度、資料時間。速限用「目前在路線的哪一小段」（路線吸附的進度），**離路線超過 25 m、偏航或重新規劃中就不套用**（寫「不在路線上：速限未確認」），避免平行、上下層、對向道路配錯。超過「速限＋max(3 km/h, 5%)」持續 3 秒才提醒「超過速限 N km/h（請依道路狀況安全行駛）」；速限未知或 GPS 不可靠時不比較；前方 400 m 內有道路事件時提示「速限以現場標誌為準」。只有文字與顏色提醒，沒有聲音。
+- **API**：`/api/v1/osm/route` 每條路線多了 `speedLimits`（`table` 去重後的速限、`seg` 每段的索引、`version`）；`/api/v1/osm/nearest` 多了 `speedLimit`（順向、逆向）。
+- **實測（全台資料）**：台中車站→新竹 101.6 km：官方 70.5%、OSM 19.8%、未知 9.8%（有些路段 OSM 標 110、官方 100，採官方）；台中車站→逢甲 8.3 km：OSM 27.1%、未知 72.9%；台北車站→台北 101 7.2 km：OSM 58.7%、法定 14.2%、未知 27.1%。全台道路長度只有 5.7% 有 OSM 速限標籤、官方速限只有國道，所以**大部分道路會顯示「速限未知」**。導航面板用瀏覽器裡模擬的 GPS 驗證（台中，40 與 80 km/h）：速度、路名、速限未知、速限 50（OSM）與 3 秒後的超速提醒都正確；**實機 GPS 沒有測過**。
+- 新增：`server/osm/speed-limit.mjs`、`tools/osm/osm-speedlimits.mjs`、`js/speed-meter.js`、`test/speed-limit.mjs`。

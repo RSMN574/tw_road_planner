@@ -84,7 +84,7 @@ run(process.execPath, ['build.mjs'], { retry: 'npm run build' }); done.push('打
 // ---------- 5. 地圖資料 ----------
 step('全台地圖資料（OpenStreetMap）');
 const gdir = curGraphDir(), haveGraph = !!gdir && exists(path.join(gdir, 'osm-graph.twosm'));
-const haveBld = haveGraph && exists(path.join(gdir, 'osm-buildings.twbld')), havePoi = haveGraph && exists(path.join(gdir, 'osm-poi.json.gz'));
+const haveBld = haveGraph && exists(path.join(gdir, 'osm-buildings.twbld')), havePoi = haveGraph && exists(path.join(gdir, 'osm-poi.json.gz')), haveSl = haveGraph && exists(path.join(gdir, 'speed-extra.json'));
 if (haveGraph) ok(`已有道路圖 ${gdir}${haveBld ? '、建築' : ''}${havePoi ? '、店家地點' : ''}`);
 if (!(haveGraph && haveBld && havePoi) || FORCE) info('下載台灣 OSM（約 300 MB，時間依網路）＋建道路圖與地標表（約 1～2 分鐘）、建築（約 40 秒）、店家地點（約 40 秒），完成後約佔 850 MB；資料 © OpenStreetMap contributors（ODbL）');
 if (freeDisk < 2 * 1024 ** 3) warn('磁碟可用空間小於 2 GB');
@@ -96,6 +96,7 @@ else {
   if (!haveGraph || FORCE) { run(process.execPath, ['--max-old-space-size=4096', 'tools/osm/osm-build.mjs'], { retry: 'npm run osm:build' }); done.push('道路圖＋地標表'); } else ok('道路圖已存在');
   if (!haveBld || FORCE) { run(process.execPath, ['--max-old-space-size=6144', 'tools/osm/osm-buildings.mjs'], { retry: 'npm run osm:buildings' }); done.push('建築'); } else ok('建築已存在');
   if (!havePoi || FORCE) { run(process.execPath, ['--max-old-space-size=6144', 'tools/osm/osm-poi.mjs'], { retry: 'npm run osm:poi' }); done.push('店家地點'); } else ok('店家地點已存在');
+  if (!haveSl || FORCE) { run(process.execPath, ['--max-old-space-size=4096', 'tools/osm/osm-speedlimits.mjs'], { retry: 'npm run osm:speedlimits' }); done.push('速限附加資料'); } else ok('速限附加資料已存在');   // v1.20
 }
 function readdirSafe(d) { try { return readdirSync(path.join(ROOT, d)); } catch { return []; } }
 

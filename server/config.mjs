@@ -42,6 +42,8 @@ export function readConfig(env = process.env) {
     // v1.16 大眾運輸資料定時同步（小時；0＝不自動，改用 npm run transit:sync 排程）。只抓到期的資料（當日班表 6 小時、其他 1～30 天），每次約 25 次呼叫
     // v1.17 停車場與充電站：即時剩餘車位、充電槍狀態查看時才向 TDX 取，快取秒數（每個縣市一次呼叫）
     placesLiveTtlS: Math.max(30, num(env.PLACES_LIVE_TTL_S, 180)),
+    // v1.19 公車即時：只抓有人在看的站牌與路線，快取 15～20 秒；每分鐘最多向 TDX 呼叫幾次（超過時用上一筆資料或回 503）
+    realtime: { maxCallsPerMin: Math.max(10, num(env.REALTIME_MAX_CALLS_PER_MIN, 300)) },
     transitSyncHours: Math.max(0, num(env.TRANSIT_SYNC_HOURS, 6)),
     traffic: { pollMin: Math.max(0, num(env.TRAFFIC_POLL_MIN, 5)) },
     tdx: { tokenUrl: env.TDX_TOKEN_URL || '', apiKey: env.TDX_API_KEY || '', ts: env.TDX_TS || '',

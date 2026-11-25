@@ -8,7 +8,7 @@ import { Worker } from 'node:worker_threads';
 import { ApiError } from './http-util.mjs';
 import * as osm from './osm-engine.mjs';
 
-export const OSM_OPS = ['osmRoute', 'osmNearest', 'osmSearch', 'osmTile', 'osmBuildingTile', 'osmTransitPlan', 'osmTransitStatus', 'osmTrafficEvents', 'osmTrafficFlow', 'osmPoiSearch', 'osmPoiNearby', 'osmPoiDetail', 'osmPoiCategories'];          // 全台 OSM 道路圖（osm-engine.mjs）；沒有圖檔時回 503
+export const OSM_OPS = ['osmRoute', 'osmNearest', 'osmSearch', 'osmTile', 'osmBuildingTile', 'osmTransitPlan', 'osmTransitStatus', 'osmTransitStops', 'osmTransitStop', 'osmTransitRoute', 'osmTrafficEvents', 'osmTrafficFlow', 'osmPoiSearch', 'osmPoiNearby', 'osmPoiDetail', 'osmPoiCategories'];          // 全台 OSM 道路圖（osm-engine.mjs）；沒有圖檔時回 503
 
 export function inlineBackend() {
   const be = { kind: 'inline', size: 0, stats: () => ({ mode: 'inline' }), close: async () => {} };

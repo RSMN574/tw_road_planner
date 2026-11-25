@@ -59,7 +59,9 @@ export class GpsFilter {
   _emit(raw, ts, acc, dt, relocated = false, move = null) {
     this.stats.accepted++;
     const [lat, lon] = this.toLL(this.x, this.y);
-    let speed = Number.isFinite(raw.speed) && raw.speed >= 0 ? raw.speed : (move && dt > 0 ? Math.hypot(move[0], move[1]) / dt : null);
+    const dev = Number.isFinite(raw.speed) && raw.speed >= 0;
+    let speed = dev ? raw.speed : (move && dt > 0 ? Math.hypot(move[0], move[1]) / dt : null);
+    this.speedSrc = dev ? 'device' : speed != null ? 'position' : null;                          // v1.20：速度來源（裝置的都卜勒速度／濾波後位移）給 speed-meter.js
     // 方向：裝置回報的 heading（要有速度才可信）→ 否則用位移方向（至少移動 headingMinMoveM 才更新，避免靜止時亂跳）
     let h = null;
     if (Number.isFinite(raw.heading) && speed != null && speed >= this.o.headingMinSpeed) h = norm360(raw.heading);
@@ -70,7 +72,7 @@ export class GpsFilter {
     }
     if (h != null) this.heading = this.heading == null || relocated ? h : norm360(this.heading + Math.atan2(Math.sin((h - this.heading) * Math.PI / 180), Math.cos((h - this.heading) * Math.PI / 180)) * 180 / Math.PI * 0.6);
     const sd = Math.sqrt(this.P), accuracy = Math.max(Math.min(acc, sd), 1);
-    return { accepted: true, reason: relocated ? 'relocated' : null, fix: { lat, lon, rawLat: raw.lat, rawLon: raw.lon, accuracy, rawAccuracy: acc, altitude: Number.isFinite(raw.altitude) ? raw.altitude : null, speed, heading: this.heading, timestamp: ts, weak: acc > this.o.maxAccuracyM, relocated } };
+    return { accepted: true, reason: relocated ? 'relocated' : null, fix: { lat, lon, rawLat: raw.lat, rawLon: raw.lon, accuracy, rawAccuracy: acc, altitude: Number.isFinite(raw.altitude) ? raw.altitude : null, speed, speedSrc: this.speedSrc, dt, heading: this.heading, timestamp: ts, weak: acc > this.o.maxAccuracyM, relocated } };
   }
 }
 export const rawDistM = (a, b) => worldHaversine(a.lon, a.lat, b.lon, b.lat);

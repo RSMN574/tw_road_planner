@@ -8,7 +8,7 @@ import { svg } from './dom.js';
 import { isGeo, lonLatToWorld, worldToLonLat } from './geo.js';
 import { esc, fmtDist } from './util.js';
 import { MODES } from './constants.js';
-import { getMode, getVehicleKey } from './vehicle.js';
+import { getMode, getVehicleKey, osmLimitAt, speedLimitText } from './vehicle.js';
 import { clientToWorld, fitBase, labelBBox, placeLabels, render, resetView, scheduleRender, screenToWorld, unrotate, worldToScreen } from './render-core.js';
 import { ZOOM, currentZoom, metersPerPixel, syncMapUi, visibleFlatQuad } from './map-view.js';
 import { drawBuildings } from './osm-buildings.js';
@@ -83,8 +83,17 @@ const osmIsToll = w => w.highway === 'motorway' && /國道|高速公路/.test(`$
 // 某一段（coords 的第 i 段）所屬 way 的速限文字：OSM 有標／區域速限代碼（TW:urban 等）／依道路類別推估
 export function osmSpdText(sr, i) {
   const T = sr.timing, w = T && T.segWay ? sr.ways[T.segWay[Math.max(0, Math.min(T.segWay.length - 1, i))]] : null;
-  if (!w || w.limitKmh == null) return w && w.highway === 'ferry' ? '渡輪' : '';
-  return w.limitSrc === 'tag' ? `速限 ${w.limitKmh} km/h` : w.limitSrc === 'zone' ? `區域速限約 ${w.limitKmh} km/h（OSM 只標區域代碼，依類別推估）` : `速限未知（推估 ${w.limitKmh} km/h）`;
+  if (w && w.highway === 'ferry') return '渡輪';
+  return speedLimitText(osmLimitAt(sr, i), true);
+}
+// 路線長度中各種速限來源的比例（公尺）
+export function osmLimitCoverage(sr) {
+  const ll = sr.geometry || [], S = sr.speedLimits, out = { tdx: 0, osm: 0, zone: 0, cond: 0, unknown: 0, total: 0 }; if (!S || !S.seg) return null;
+  for (let i = 0; i + 1 < ll.length && i < S.seg.length; i++) {
+    const a = ll[i], b = ll[i + 1], m = Math.hypot((b[0] - a[0]) * 111320 * Math.cos(a[1] * Math.PI / 180), (b[1] - a[1]) * 110574), L = S.seg[i] >= 0 ? S.table[S.seg[i]] : null;
+    out.total += m; const k = !L || L.kmh == null ? 'unknown' : L.source === 'tdx' ? 'tdx' : L.source === 'osm-zone' ? 'zone' : L.source === 'osm-cond' ? 'cond' : 'osm'; out[k] += m;
+  }
+  return out;
 }
 // 伺服器的一條路線 → 網頁的 route 物件（coords 是世界座標；_osm 保留伺服器的原始資料）
 export function osmRouteObj(sr, color, label) {
@@ -113,7 +122,7 @@ export function osmWarnText(sr) {
   if (w.conditionalM > 20) out.push(`${fmtDist(w.conditionalM)} 有時段／條件限制（未判斷時段）`);
   if (w.pierLinkM > 20) out.push(`碼頭連接 ${fmtDist(w.pierLinkM)} 為推估`);
   const zone = (sr.ways || []).filter(x => x.limitSrc === 'zone').reduce((a, x) => a + x.m, 0);
-  if (w.unknownSpeedM > 200) out.push(`${Math.round(w.unknownSpeedM / Math.max(1, sr.distanceM) * 100)}% 路段沒有速限資料${zone > 100 ? `（其中 ${fmtDist(zone)} 只有區域代碼如 TW:urban）` : ''}，時間依道路類別推估`);
+  if (w.unknownSpeedM > 200) out.push(`${Math.round(w.unknownSpeedM / Math.max(1, sr.distanceM) * 100)}% 路段沒有速限標籤${zone > 100 ? `（其中 ${fmtDist(zone)} 只有區域代碼如 TW:urban）` : ''}，時間依道路類別推估（不當成速限顯示）`);
   return out.join('；');
 }
 // 規劃：回傳 { items, notes }（失敗丟出 Error）
@@ -144,7 +153,7 @@ export function osmAnalysisRows(it) {
   const lim = ways.filter(x => x.limitSrc === 'tag'), avg = tag ? lim.reduce((a, x) => a + x.limitKmh * x.m, 0) / tag : NaN;
   const rows = [['路線', it.label], ['資料', `OpenStreetMap（資料時間 ${osmDate(State.osm && State.osm.info)}；© OpenStreetMap contributors）`], ['演算法', it.algo], ['總距離', fmtDist(sr.distanceM)],
     [`預估時間（${OSM_MODE_LABEL[osmModeOf()] || ''}）`, `${(sr.durationS / 60).toFixed(1)} 分：行駛 ${(sr.driveS / 60).toFixed(1)} 分＋路口與轉彎 ${(sr.delayS / 60).toFixed(1)} 分（未含即時路況、收費站）`],
-    ['速限資料', `OSM 有標 ${Math.round(tag / L * 100)}%${isFinite(avg) ? `（平均 ${Math.round(avg)} km/h）` : ''}${zone ? `；只有區域代碼 ${Math.round(zone / L * 100)}%` : ''}；其餘依道路類別推估`],
+    ['速限資料', (() => { const c = osmLimitCoverage(sr); if (!c || !c.total) return `OSM 有標 ${Math.round(tag / L * 100)}%${isFinite(avg) ? `（平均 ${Math.round(avg)} km/h）` : ''}${zone ? `；只有區域代碼 ${Math.round(zone / L * 100)}%` : ''}；其餘速限未知`; const p = x => Math.round(x / c.total * 100) + '%'; return [c.tdx ? `官方（TDX）${p(c.tdx)}` : '', c.osm ? `OSM 標籤 ${p(c.osm)}` : '', c.cond ? `OSM 時段速限 ${p(c.cond)}` : '', c.zone ? `法定（區域代碼）${p(c.zone)}` : '', `速限未知 ${p(c.unknown)}`].filter(Boolean).join('、') + '（時間估算對未知路段依道路類別推估）'; })()],
     ['轉彎', `${it.turns} 次`], ['收費路段（國道）', it.toll > 0 ? `${(it.toll / 1000).toFixed(1)} km（費率未納入）` : '無']];
   if (sr.ferries && sr.ferries.length) rows.push(['渡輪', sr.ferries.map(f => `${f.name || '航線'} ${fmtDist(f.m)}、約 ${Math.round(f.durationS / 60)} 分（${f.source}）`).join('；') + '；不含候船與班次時間']);
   const acc = [w.unknownM > 0 ? `未標註 ${fmtDist(w.unknownM)}` : '', w.limitedM > 0 ? `有限制 ${fmtDist(w.limitedM)}` : '', w.conditionalM > 0 ? `時段／條件限制 ${fmtDist(w.conditionalM)}（未判斷）` : '', w.defaultAllowedM > 0 ? `依道路類別推定可通行 ${fmtDist(w.defaultAllowedM)}` : ''].filter(Boolean);
@@ -167,7 +176,7 @@ export async function osmInspect(x, y, box) {                     // x, y：世�
   try {
     const d = await osmGet('nearest', { lat: lat.toFixed(6), lon: lon.toFixed(6), mode, radius: 200 });
     State.osm.inspect = lonLatToWorld(d.at[1], d.at[0]);
-    const rows = [['道路', d.name || '（無路名）'], ['編號', d.ref || '—'], ['類別（OSM）', `${osmHwLabel(d.highway)}（highway=${d.highway}）`], ['速限', d.limitSrc === 'tag' ? `${d.limitKmh} km/h（OSM 有標）` : d.limitSrc === 'zone' ? `約 ${d.limitKmh} km/h（OSM 只標區域代碼，依類別推估）` : `未知（依道路類別推估 ${d.limitKmh} km/h）`],
+    const rows = [['道路', d.name || '（無路名）'], ['編號', d.ref || '—'], ['類別（OSM）', `${osmHwLabel(d.highway)}（highway=${d.highway}）`], ['速限', d.speedLimit ? (() => { const f = d.speedLimit.forward, b = d.speedLimit.backward, t = L => `${speedLimitText(L)}${L && L.kmh != null ? `・${L.label}` : ''}${L && L.notes && L.notes.length ? '・' + L.notes.join('；') : ''}`; return f.kmh === b.kmh && f.source === b.source ? t(f) : `順向 ${t(f)}；逆向 ${t(b)}`; })() : d.limitSrc === 'tag' ? `${d.limitKmh} km/h（OSM 有標）` : '速限未知'],
       ...Object.entries(d.access).map(([k, v]) => [`通行：${OSM_MODE_LABEL[k] || k}`, OSM_ACCESS[v] || v]), ['距離', `${d.distanceM} m`], ['OSM way', String(d.osmWay)]];
     box.innerHTML = `<div style="font-size:13px;font-weight:600;margin:14px 0 4px;color:#334155">🛣 道路資訊（OSM）</div><table style="font-size:12px;width:100%;border-collapse:collapse">` +
       rows.map(([a, b]) => `<tr><td style="color:#64748b;padding:2px 6px 2px 0;white-space:nowrap">${esc(a)}</td><td>${esc(b)}</td></tr>`).join('') + '</table><div style="font-size:11px;color:#94a3b8;margin-top:4px">資料：© OpenStreetMap contributors。未標註的通行權依道路類別推定。</div>';

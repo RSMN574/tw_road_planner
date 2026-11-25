@@ -31,7 +31,8 @@ export function createEtaStore({ staleS = 180, maxAgeMs = 10 * 60e3, now = () =>
   // 查一個站牌的即時狀態。回傳 kind：
   //   live（arrivals：預估到站的絕對時間）／stale（過期）／status（尚未發車、未營運…）／nodata（有這筆但沒有預估時間）／none（完全沒有資料）
   function get({ subRouteUID = null, routeUID = null, direction = null, stopUID }, at = now()) {
-    const rec = map.get(keyOf(subRouteUID, routeUID, direction, stopUID)) || (subRouteUID && routeUID ? map.get(keyOf(null, routeUID, direction, stopUID)) : null);
+    let rec = map.get(keyOf(subRouteUID, routeUID, direction, stopUID)) || (subRouteUID && routeUID ? map.get(keyOf(null, routeUID, direction, stopUID)) : null);
+    if (rec && subRouteUID && rec.subRouteUID && rec.subRouteUID !== subRouteUID) rec = null;   // v1.19：以 RouteUID 找到的是別的子路線 → 不能用（不同子路線的 ETA 不混）
     if (!rec) { stats.misses++; return { kind: 'none', text: '沒有即時資料' }; }
     stats.hits++;
     const ageS = rec.dataMs == null ? Infinity : (at - rec.dataMs) / 1000, base = { dataMs: rec.dataMs, ageS: Number.isFinite(ageS) ? Math.round(ageS) : null, seq: rec.seq, source: 'TDX Bus/EstimatedTimeOfArrival' };

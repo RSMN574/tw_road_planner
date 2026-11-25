@@ -4,7 +4,8 @@ import { svg } from './dom.js';
 import { isGeo, lonLatToWorld, worldDistM, worldToLonLat } from './geo.js';
 import { esc, fmtClock, fmtDist } from './util.js';
 import { generateManeuvers } from './analysis.js';
-import { getMode, getVehicleKey } from './vehicle.js';
+import { getMode, getVehicleKey, osmLimitAt } from './vehicle.js';
+import { SpeedMeter } from './speed-meter.js';
 import { GPS_TEXT, GpsService } from './gps.js';
 import { NavigationEngine } from './navigation.js';
 import { EtaModel, EtaSmoother } from './eta-engine.js';
@@ -162,6 +163,29 @@ function refreshTime() {
     `${range ? range + '・' : ''}可信度${CONF[e.confidence] || '—'}${ago != null ? `・${ago < 3 ? '剛剛' : ago + ' 秒前'}更新` : ''}・依速限與路口推估，未含即時路況`);
   const nt = gid('navNote'); if (nt && nt.dataset) nt.dataset.bad = gpsBad ? '1' : '';
 }
+// ---------- v1.20 速度與速限面板 ----------
+// 速限：目前所在的路線小段（RouteTrack 的進度 → 座標段落 → 伺服器的 speedLimits）；不在路線上（偏離 > 25 m、偏航、重新規劃中）就不套用路線的速限，避免平行道路、上下層道路、對向車道配錯
+const NS_SRC = { tdx: '官方', 'osm-sign': 'OSM（依標誌）', osm: 'OSM', 'osm-cond': 'OSM 時段', 'osm-zone': '法定' };
+function speedLimitNow(n) {
+  const s = n.state, e = n.engine, r = State.currentRoute; if (!s || !r || !r._osm || !e.track) return { L: null, why: '' };
+  if (['offroute', 'rerouting'].includes(e.status) || !(s.offsetM <= 25)) return { L: null, why: '不在路線上：速限未確認' };
+  const i = e.track._segAt(Math.max(0, Math.min(e.track.total, s.s))); return { L: osmLimitAt(r._osm, i), i };
+}
+function refreshSpeed() {
+  const n = State.nav; if (!n || !n.speed) return; const box = gid('navSpeed'); if (!box) return;
+  const now = Date.now(), st = n.speed.state(now), walk = n.vk === 'walk', { L, why, i } = walk ? { L: null } : speedLimitNow(n);
+  setText('nsKmh', st.kmh == null ? '—' : String(st.kmh));
+  const lim = gid('nsLim'); if (lim) { const k = walk ? '' : L && L.kmh != null ? `<span class="ns-sign">${L.kmh}</span><small>${esc(NS_SRC[L.source] || '')}</small>` : `<span class="ns-unk">速限<br>未知</span>`; if (lim.dataset.k !== k) { lim.dataset.k = k; lim.innerHTML = k; } lim.hidden = walk; }
+  const cmp = walk ? 'unknown' : n.speed.compare(L && L.kmh, now);
+  if (box.classList) { box.classList.toggle('over', cmp === 'over'); box.dataset.q = st.quality; }
+  const ways = State.currentRoute && State.currentRoute._osm ? State.currentRoute._osm : null, w = ways && i != null && ways.timing && ways.timing.segWay ? ways.ways[ways.timing.segWay[i]] : null;
+  setText('nsRoad', w ? (w.name || w.ref || '') : '');
+  setText('nsMeta', `${st.qualityText}${st.accuracyM != null ? `・精度 ±${st.accuracyM} m` : ''}${st.updatedAt ? `・${new Date(st.updatedAt + 8 * 3600e3).toISOString().slice(11, 19)}` : ''}${st.source === 'position' ? '・由位置變化估算' : ''}`);
+  // 提醒：超速（持續 3 秒）／速限備註（可變、時段、與官方不一致）／前方道路事件／不在路線上
+  const ev = ways && ways.events && n.state ? ways.events.find(x => x.m - n.state.s > -50 && x.m - n.state.s < 400) : null;
+  const msg = cmp === 'over' ? `超過速限 ${L.kmh} km/h（請依道路狀況安全行駛）` : why || (ev ? '前方有道路事件（施工／管制），速限以現場標誌為準' : L && L.notes && L.notes.length ? L.notes[0] : '');
+  const wn = gid('nsWarn'); if (wn) { wn.textContent = msg; wn.hidden = !msg; }
+}
 function onGpsStatus({ status, text, detail }) {
   if (status === 'lost' && State.nav) State.nav.engine.markGpsLost();
   const chip = gid('gpsChip'); if (chip) { setText('gpsChip', text); chip.dataset.s = status; chip.title = detail || ''; }
@@ -208,18 +232,19 @@ export function startNavigation() {
   engine.start(route, generateManeuvers(route), V ? k => V.spd[k] / 3.6 : null, {
     model: (r, t, m) => new EtaModel(r, t, m, vkm, H), smoother,
     onEdge: (k, meters, sec, t) => { H.add(k, meters, sec, t); } });   // OSM 路線的 k 是 'osm:<way id>'
-  State.nav.tick = setInterval(() => { refreshTime(); if (State.nav && State.nav.trip && State.nav.state) State.nav.trip.pred(Date.now(), State.nav.state); }, 1000);
+  State.nav.speed = new SpeedMeter();
+  State.nav.tick = setInterval(() => { refreshTime(); refreshSpeed(); if (State.nav && State.nav.trip && State.nav.state) State.nav.trip.pred(Date.now(), State.nav.state); }, 1000);
   gps.on('status', onGpsStatus); gps.on('fix', onFix); gps.on('reject', r => { if (r === 'jump') toast('已忽略異常定位跳點', 2000); });
   drawRoute(route, true); setNavZoom(); scheduleRender(); refreshUI();
   if (!gps.start()) return;                                                                             // 失敗原因由 status 事件處理
   acquireWakeLock();
 }
 function onFix(fix) {
-  const n = State.nav; if (!n) return; n.fix = fix; if (n.trip) n.trip.fix(fix); const s = n.engine.update(fix);
+  const n = State.nav; if (!n) return; n.fix = fix; if (n.trip) n.trip.fix(fix); if (n.speed) n.speed.update(fix); const s = n.engine.update(fix);
   if (n.first) { n.first = false; if (s && s.offsetM > 100 && n.engine.status === 'navigating') { toast('您不在路線上，從目前位置重新規劃'); requestReroute(fix); } setNavZoom(); }
   if (n.first === false && !n.zoomed) { n.zoomed = true; scheduleRender(); }                  // 第一次定位改了縮放：完整重畫一次
   animateMarker();                                                                           // 地圖跟隨與箭頭移動都在動畫裡做（只平移已畫好的畫面）
-  refreshUI();
+  refreshUI(); refreshSpeed();
 }
 async function requestReroute(fix) {
   const n = State.nav; if (!n || n.rerouteBusy) return; n.rerouteBusy = true; n.engine.rerouting = true; if (n.engine.status === 'navigating') n.engine._status('rerouting'); refreshUI();

@@ -10,6 +10,7 @@ import { buildTransfersCached } from './transit/transfer-engine.mjs';
 import { planTransit, LEG_TYPE, MODE_LABEL } from './transit/raptor.mjs';
 import { ApiError } from './http-util.mjs';
 import { MinHeap } from '../js/heap.js';
+import { stopsInBBox, stopInfo, routeInfo } from './transit/stop-info.mjs';
 
 let td = null, ctx = null, builtKey = '', cfgT = null, injected = false, metaSig = '', metaCheckedAt = 0;
 // v1.16：同步工具（或伺服器的定時同步）更新了快取 → 下一次查詢時重新讀取（最多每分鐘檢查一次 meta.json）
@@ -129,6 +130,10 @@ function ensure(router) {
 }
 // 伺服器啟動時預先建好（全台實測：轉乘約 15 秒，避免第一位使用者等）；沒有資料回傳 false
 export function transitPrepare(router) { try { const c = ensure(router); try { c.store.day(new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10)); } catch { /* 沒有 day()（測試替身） */ } return true; } catch { return false; } }   // 也先展開今天的班表（全台公車第一次查詢約 5 秒）
+// v1.19 公車站牌、經過站牌的路線（預定時刻）、路線站序：即時資料在主執行緒合併（server/transit/bus-realtime.mjs）
+export const transitStops = (bbox, router) => stopsInBBox(ensure(router).store, bbox);
+export function transitStop(uid, router, nowMs = Date.now()) { const r = stopInfo(ensure(router).store, uid, nowMs); if (!r) throw new ApiError(404, 'NO_STOP', `找不到站牌 ${uid}`); return r; }
+export function transitRoute(id, router) { const r = routeInfo(ensure(router).store, id); if (!r) throw new ApiError(404, 'NO_ROUTE_PATTERN', `找不到路線型態 ${id}`); return r; }
 export function transitStatus() {
   const c = ctx; return { loaded: !!c, injected, version: c ? c.store.version : null, stats: c ? c.store.stats : null, transfers: c ? c.tr.stats : null, detail: c ? c.store.detail || null : null,
     datasets: td ? td.status().datasets : null, warnings: c ? c.store.warnings.slice(0, 50) : [] };

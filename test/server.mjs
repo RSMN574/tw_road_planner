@@ -55,6 +55,8 @@ origLog('② API：格式、錯誤、已移除的舊 API');
   ok('舊路網的 API → 410 GONE，訊息指出新的 API', gr.every((r, i) => r.status === 410 && r.j.error.code === 'GONE' && r.j.error.message.includes(gone[i][1])), gr.map(r => r.status).join('、'));
   const gp = await J('/api/v1/route', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); ok('POST 舊 API 也是 410', gp.status === 410);
   const o = await J('/api/v1/osm/route?from=24.1,120.6&to=24.2,120.7'); ok('沒有 OSM 圖檔 → 503 OSM_NOT_LOADED（明確說明）', o.status === 503 && o.j.error.code === 'OSM_NOT_LOADED');
+  const ts = await Promise.all(['/api/v1/transit/stops?bbox=120.6,24.1,120.61,24.11', '/api/v1/transit/stop?uid=TXG1', '/api/v1/transit/vehicles?pattern=TXG1%7C0'].map(p => J(p)));
+  ok('v1.19 公車站牌、到站、車輛 API：沒有 OSM 圖檔 → 503（不回假資料）', ts.every(r => r.status === 503 && r.j.error.code === 'OSM_NOT_LOADED'), ts.map(r => r.status).join('、'));
   const e4 = await J('/api/v1/nope'); ok('不存在的 API → 404 JSON（含 requestId）', e4.status === 404 && e4.j.error.code === 'NOT_FOUND' && e4.j.meta.requestId && e4.h.get('x-request-id') === e4.j.meta.requestId);
   const e5 = await J('/api/v1/osm/search', { method: 'POST' }); ok('方法不對 → 405', e5.status === 405 && e5.j.error.code === 'METHOD_NOT_ALLOWED');
   const e6 = await J('/api/v1/osm/route', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{bad' }); ok('壞掉的 JSON → 400 BAD_JSON', e6.status === 400 && e6.j.error.code === 'BAD_JSON');
