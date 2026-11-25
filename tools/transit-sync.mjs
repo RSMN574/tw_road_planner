@@ -4,9 +4,7 @@
 //   node tools/transit-sync.mjs                  只抓到期的資料
 //   node tools/transit-sync.mjs --force          全部重抓
 //   node tools/transit-sync.mjs --offline        不連網，只用磁碟上已有的資料重建並印報告
-//   node tools/transit-sync.mjs --metro-json     同步完順便產生 data/metro.json（捷運真實站序、站間時間、班距、票價；舊檔備份成 .bak）
-//   node tools/transit-sync.mjs --ubike-json     順便下載 YouBike 站點（TDX Bike/Station）到 data/ubike.json（大眾運輸的 YouBike 接駁要用；只有站點，沒有即時車輛）
-//   選項：--city Taichung  --operators TMRT
+//   選項：--city Taichung  --operators TMRT   （v1.16：--city all＝全台 22 縣市＋公路客運＋台灣好行；也可 --city Taipei,NewTaipei,InterCity）
 //   v1.11：--rail TRA,THSR（台鐵、高鐵：車站、定期／當日時刻表、票價、即時誤點）  --extras（捷運站別時刻表、跨系統轉乘、共站、GIS 軌道線型）
 //         全台建議：--city Taipei --operators TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT --rail TRA,THSR --extras（伺服器的 /api/v1/transit/plan 讀同一個快取）
 import { fileURLToPath } from 'node:url';
@@ -38,16 +36,3 @@ for (const [op, r] of Object.entries(s.detail.rail || {})) console.log(`軌道 $
 if (s.detail.crossTransfers) console.log(`跨系統轉乘（StationTransfer／TransferStations）：${s.detail.crossTransfers} 筆`);
 for (const [op, m] of Object.entries(s.detail.metro || {})) console.log(`捷運 ${op}：${m.patterns} 個方向型態、${m.withFreq} 個有班距、站間時間推估的型態 ${m.runEstimatedPatterns}${m.missing.length ? '；缺 ' + m.missing.join('、') : ''}`);
 if (s.warnings.length) { console.log(`\n資料警告（${s.warnings.length}）：`); for (const w of s.warnings.slice(0, 40)) console.log('  - ' + w); }
-if (has('metro-json')) {                                                                       // 交給 tools/metro-json.mjs（同一套檢查與備份）
-  const { spawnSync } = await import('node:child_process'), r = spawnSync(process.execPath, [fileURLToPath(new URL('./metro-json.mjs', import.meta.url)), '--operators', arg('operators', 'TMRT')], { stdio: 'inherit' });
-  if (r.status) process.exitCode = r.status;
-} else if (s.detail.metro && Object.keys(s.detail.metro).length) console.log('\n提示：加 --metro-json 可用這些資料產生 data/metro.json（或執行 node tools/metro-json.mjs）');
-if (has('ubike-json')) {
-  if (!fetchJson) { console.error('找不到 TDX token，無法下載 YouBike 站點'); process.exitCode = 2; }
-  else {
-    const { writeFileSync, renameSync, copyFileSync, existsSync } = await import('node:fs'), out = tk.cfg.files.youbike, r = await fetchJson(`/Bike/Station/City/${arg('city', 'Taichung')}?%24format=JSON`);
-    const rows = r.status === 200 && Array.isArray(r.data) ? r.data.filter(x => x && x.StationUID && x.StationPosition && Number.isFinite(+x.StationPosition.PositionLat) && Number.isFinite(+x.StationPosition.PositionLon)) : [];
-    if (!rows.length) { console.log(`✗ YouBike 站點下載失敗：HTTP ${r.status}${r.detail ? '：' + String(r.detail).slice(0, 120) : ''}（保留原本的 ${out}）`); process.exitCode = 1; }
-    else { if (existsSync(out)) copyFileSync(out, out + '.bak'); writeFileSync(out + '.tmp', JSON.stringify(rows)); renameSync(out + '.tmp', out); console.log(`✅ YouBike 站點 ${rows.length} 站 → ${out}${existsSync(out + '.bak') ? '（舊檔備份成 .bak）' : ''}`); }
-  }
-}

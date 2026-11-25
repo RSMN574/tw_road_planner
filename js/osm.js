@@ -1,8 +1,8 @@
 // osm.js — 全台 OSM 道路圖（由伺服器提供）：地圖底圖（圖磚）、路線規劃、導航的重新規劃、路名搜尋、道路資訊
-// 伺服器有載入 OSM 道路圖（api/v1/health 的 osm.loaded）時自動啟用，可在介面上關閉改回本機路網。
+// 伺服器有載入 OSM 道路圖（api/v1/health 的 osm.loaded）時啟用（v1.18：唯一的路網，舊的本機路網已移除）。
 // ・不把整張圖送到瀏覽器：底圖用 api/v1/osm/tiles/{z}/{x}/{y}.json，只抓看得到的範圍；路線由伺服器計算
 // ・路線的時間、每段時間（timing）與導航 ETA 用同一套模型（eta-params.js）；渡輪、未標註的通行限制、推估的速限都會標示
-// ・座標：伺服器一律用 WGS84 經緯度；網頁的「世界座標」可能是經緯度或 TWD97（有載入本機路網時），一律經 lonLatToWorld 轉換
+// ・座標：伺服器與網頁的「世界座標」都是 WGS84 經緯度（仍經 lonLatToWorld 轉換，保留單一入口）
 import { Hooks, State } from './state.js';
 import { svg } from './dom.js';
 import { isGeo, lonLatToWorld, worldToLonLat } from './geo.js';
@@ -14,9 +14,8 @@ import { ZOOM, currentZoom, metersPerPixel, syncMapUi, visibleFlatQuad } from '.
 import { drawBuildings } from './osm-buildings.js';
 
 // ---------- 狀態 ----------
-export const osmOn = () => !!(State.osm && State.osm.avail && State.osm.on);
-const OSM_PREF_KEY = 'osm.on', OSM_TW = [119.25, 122.1, 21.85, 25.35];         // 台灣（含澎湖）的範圍：沒有本機路網時的初始畫面
-const osmStore = { get() { try { return localStorage.getItem(OSM_PREF_KEY) !== '0'; } catch { return true; } }, set(v) { try { localStorage.setItem(OSM_PREF_KEY, v ? '1' : '0'); } catch {} } };
+export const osmOn = () => !!(State.osm && State.osm.avail);
+const OSM_TW = [119.25, 122.1, 21.85, 25.35];                                    // 台灣（含澎湖）的範圍：初始畫面
 export const osmModeOf = () => { const v = getVehicleKey(); return v === 'bus' ? 'car' : v; };
 const OSM_HW_LABEL = { motorway: '高速公路', trunk: '快速公路／省道幹道', primary: '主要道路', secondary: '次要道路', tertiary: '一般道路', unclassified: '一般道路（未分級）', residential: '巷弄／住宅區道路', living_street: '生活巷道', service: '服務道路', track: '產業道路', pedestrian: '行人徒步區', footway: '人行道', path: '小徑', cycleway: '自行車道', steps: '階梯', ferry: '渡輪航線', pier_link: '碼頭連接（推估）', motorway_link: '匝道', trunk_link: '匝道', primary_link: '連接道', secondary_link: '連接道', tertiary_link: '連接道', busway: '公車專用道', road: '道路（未分類）' };
 const OSM_ACCESS = { allowed: '可通行（OSM 有標）', default_allowed: '可通行（依道路類別推定）', unknown: '未標註（依道路類別推定，結果中標示）', limited: '有限制（例如限送貨、限住戶）', restricted: '禁止（OSM 有標）', default_restricted: '禁止（依道路類別推定）', oneway: '單行道反向' };
@@ -25,45 +24,34 @@ const OSM_MODE_LABEL = { car: '汽車', heavy: '重型機車', moto: '一般機�
 // 伺服器回報 OSM 狀態（server-link.js 呼叫）
 export function osmAttach(info) {
   const avail = !!(info && info.loaded);
-  State.osm = { ...(State.osm || {}), avail, info: info || null, on: State.osm && State.osm.userSet ? State.osm.on : osmStore.get(), tiles: (State.osm && State.osm.tiles) || new Map(), inflight: new Set(), queue: [] };
-  const row = document.getElementById('osmRow'); if (row) row.hidden = !avail;
-  const cb = document.getElementById('osmOn'); if (cb) cb.checked = State.osm.on;
+  State.osm = { ...(State.osm || {}), avail, info: info || null, tiles: (State.osm && State.osm.tiles) || new Map(), inflight: new Set(), queue: [] };
   osmApply();
   return avail;
 }
-// 開／關 OSM 模式之後：調整畫面、控制項、提示
+// 伺服器的 OSM 好了之後：調整畫面、控制項、提示
 export function osmApply() {
-  if (typeof document !== 'undefined' && document.body && document.body.classList) document.body.classList.toggle('osm-map', osmOn());   // v1.12：OSM 底圖有自己的深色配色，不套反相濾鏡
   const on = osmOn(), attr = document.getElementById('osmAttr'), info = State.osm && State.osm.info;
+  if (typeof document !== 'undefined' && document.body && document.body.classList) document.body.classList.toggle('osm-map', on);   // v1.12：OSM 底圖有自己的深色配色，不套反相濾鏡
   if (attr) attr.hidden = !on;
   const hint = document.getElementById('osmHint');
-  if (hint) hint.textContent = !State.osm || !State.osm.avail ? '' : on ? `全台 OSM 道路圖（資料時間 ${osmDate(info)}）：路線在伺服器計算${info && info.alt ? '，長距離用地標加速' : ''}。` : '已關閉：使用本機載入的路網。';
-  const sh = document.getElementById('sheetHandle'), tn = sh && sh.firstChild;                     // 標題：全台模式不再叫「台中道路圖」
-  if (tn && tn.nodeType === 3) { if (State.osm && !State.osm.title0) State.osm.title0 = tn.nodeValue; tn.nodeValue = on ? '台灣道路圖 ' : (State.osm && State.osm.title0) || tn.nodeValue; }
-  if (on && !State.loaded) {                                                       // 沒有本機路網：直接用經緯度當世界座標，畫面先放全台灣
+  if (hint) hint.textContent = on ? `全台 OSM 道路圖（資料時間 ${osmDate(info)}）：路線在伺服器計算${info && info.alt ? '，長距離用地標加速' : ''}。` : '';
+  if (on) {
     State.coordType = 'wgs84'; State.projUnit = 1;
-    if (!State.base || !State.osm.fitted) { fitBase(OSM_TW[0], OSM_TW[1], OSM_TW[2], OSM_TW[3], 20); resetView(); State.osm.fitted = true; }
+    if (!State.base || !State.osm.fitted) osmFitTaiwan();
     const st = document.getElementById('stats'); if (st) st.textContent = `全台 OSM 道路圖（${osmDate(info)}）`;
-    const ph = document.getElementById('placeholder'); if (ph && !State.currentRoute) { ph.classList.add('hidden'); }
-    const fz = document.getElementById('fileName'); if (fz) fz.textContent = '沒有本機路網（使用全台 OSM 道路圖）';
-    osmFileNote();
-    const stt = document.getElementById('status'); if (stt && !State.osm.greeted) { State.osm.greeted = true; stt.className = ''; stt.style.display = 'block'; stt.innerHTML = `✅ 全台 OSM 道路圖（資料時間 ${esc(osmDate(info))}）<br>在地圖上點選起點與終點，或搜尋路名、輸入「緯度,經度」`; }
+    const ph = document.getElementById('placeholder'); if (ph && !State.currentRoute) ph.classList.add('hidden');
+    const stt = document.getElementById('status'); if (stt && !State.osm.greeted) { State.osm.greeted = true; stt.className = ''; stt.style.display = 'block'; stt.innerHTML = `✅ 全台 OSM 道路圖（資料時間 ${esc(osmDate(info))}）<br>在地圖上點選起點與終點，或搜尋地點、路名、輸入「緯度,經度」`; }
   }
   if (Hooks.syncControls) Hooks.syncControls();
   render();
 }
-// 「路網資料」區塊的說明：本機路網是選用的（不覆蓋載入進度）
-export function osmFileNote() {
-  const fl = document.getElementById('fileList'); if (!fl || document.getElementById('osmFileNote')) return;
-  fl.insertAdjacentHTML('beforeend', '<div id="osmFileNote" style="color:#64748b">本機路網是選用的（台中公車營運規劃等功能需要）；路線規劃與導航使用伺服器的全台 OSM 道路圖。</div>');
-}
 const osmDate = info => (info && (info.dataTimestamp || info.builtAt) ? String(info.dataTimestamp || info.builtAt).slice(0, 10) : '—');
-export function osmToggle(on) {
-  if (!State.osm) return; State.osm.on = !!on; State.osm.userSet = true; osmStore.set(!!on);
-  State.routeSet = []; State.activeKey = null; State.currentRoute = null; State.selStep = -1;
-  if (State.fromPoint && State.fromPoint.idx < 0 && !on) State.fromPoint = null;             // OSM 選的點沒有本機路網節點
-  if (State.toPoint && State.toPoint.idx < 0 && !on) State.toPoint = null;
-  osmApply();
+// 初始畫面放全台灣：地圖區域還沒有大小時（版面尚未排好、分頁在背景）先不算，下一個畫格再試——用 0 寬算出的比例是負的，地圖會整個畫不出來
+export function osmFitTaiwan(tries = 0) {
+  const w = svg && svg.clientWidth, h = svg && svg.clientHeight;
+  if (w > 0 && h > 0) { fitBase(OSM_TW[0], OSM_TW[1], OSM_TW[2], OSM_TW[3], 20); resetView(); if (State.osm) State.osm.fitted = true; if (tries) render(); return true; }
+  if (tries < 600 && typeof requestAnimationFrame === 'function') requestAnimationFrame(() => osmFitTaiwan(tries + 1));
+  return false;
 }
 
 // ---------- API ----------
@@ -318,5 +306,4 @@ export function osmDebug() { const v = osmView(0); return { z: osmZoom(v.dpp), t
 // 載入時要執行的綁定，由 main.js 呼叫
 export function init() {
   Hooks.drawOsmBase = drawOsmBase;
-  const cb = document.getElementById('osmOn'); if (cb) cb.addEventListener('change', () => osmToggle(cb.checked));
 }

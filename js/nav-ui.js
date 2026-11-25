@@ -3,12 +3,8 @@ import { State } from './state.js';
 import { svg } from './dom.js';
 import { isGeo, lonLatToWorld, worldDistM, worldToLonLat } from './geo.js';
 import { esc, fmtClock, fmtDist } from './util.js';
-import { findNearestNode } from './graph-core.js';
-import { matchToRoad } from './mapmatch.js';
 import { generateManeuvers } from './analysis.js';
-import { ensureVeh, getMode, getVehicleKey } from './vehicle.js';
-import { planOne } from './planners.js';
-import { packRoute } from './router.js';
+import { getMode, getVehicleKey } from './vehicle.js';
 import { GPS_TEXT, GpsService } from './gps.js';
 import { NavigationEngine } from './navigation.js';
 import { EtaModel, EtaSmoother } from './eta-engine.js';
@@ -31,29 +27,14 @@ export const settings = { voiceOn: true, rate: 1, volume: 1, promptScale: 1, smo
 let voice = null, ann = null, wakeLock = null, bound = false, edgeHist = null;
 const hist = () => edgeHist || (edgeHist = new EdgeHistory());                                    // 本機路段歷史速度（第一次導航時才讀取）
 
-// ---------- 重新規劃（純函式，可測試）----------
-// 從目前（過濾後）定位吸附到道路，沿行進方向的下一個節點出發，規劃到原本的終點。回傳 { route, item } 或 { error }
-export function rerouteFromFix(fix) {
-  if (!State.toPoint) return { error: '沒有終點' };
-  const m = matchToRoad(fix.lon, fix.lat, { heading: fix.heading, speed: fix.speed ?? 0, accuracy: fix.accuracy });
-  if (!m || !m.ok) return { error: '附近找不到道路，無法重新規劃' };
-  const dest = State.toPoint.idx, u = m.u, v = m.v, nodeXY = State.nodeXY, c = i => [nodeXY[i*5+2], nodeXY[i*5+3]];
-  if (v === dest) { const r = packRoute([u, v], [m.edge], State.adjW[m.edge]); return { route: r, item: { key: 'fastest', label: '重新規劃', color: '#16a34a', visible: true, route: r, plain: true, min: 0, seq: [], met: null, turns: 0, algo: '重新規劃', veh: getVehicleKey(), toll: 0 } }; }
-  const item = planOne(v, dest, State.nav && State.nav.planKey || 'fastest');
-  if (!item) return { error: '找不到從目前位置出發的路線' };
-  const r0 = item.route;                                                                              // 在前面接上「目前所在的那條邊」，讓車輛位置落在路線上
-  const route = { ...r0, path: [u, ...r0.path], edgePath: [m.edge, ...r0.edgePath], coords: [c(u), ...r0.coords], distance: r0.distance + State.adjW[m.edge], _segs: null, _man: null, _plain: true };
-  return { route, item: { ...item, route } };
-}
-
 // ---------- 地圖上的 GPS 箭頭／精度圈／下一個導航點 ----------
 const mPerWorld = (x, y) => isGeo() ? worldDistM(x, y, x + 1e-4, y) / 1e-4 : State.projUnit;
 export function drawNav() {
-  const b = gid('startNav'); if (b) b.disabled = !!State.nav || !(State.currentRoute && (State.currentRoute.edgePath || State.currentRoute._osm) && getMode() !== 'transit');
+  const b = gid('startNav'); if (b) b.disabled = !!State.nav || !(State.currentRoute && State.currentRoute._osm && getMode() !== 'transit');
   const n = State.nav; if (!n || !n.fix || !State.base) { rm('navMarker'); return; }
   const st = n.state, fix = n.fix, P = n.disp || markerTarget(n), wx = P.x, wy = P.y;          // n.disp：動畫中的位置（兩筆定位之間平滑移動）
   const [sx, sy] = worldToScreen(wx, wy), mpw = mPerWorld(wx, wy), [ax] = worldToScreen(wx + fix.accuracy / mpw, wy), r = Math.min(120, Math.max(12, Math.abs(ax - sx)));
-  const hdg = P.h, nx = st && st.next ? (st.next.nodeIdx != null ? worldToScreen(State.nodeXY[st.next.nodeIdx*5+2], State.nodeXY[st.next.nodeIdx*5+3]) : st.next.xy ? worldToScreen(st.next.xy[0], st.next.xy[1]) : null) : null;   // OSM 路線的導航點用座標（xy）
+  const hdg = P.h, nx = st && st.next ? (st.next.xy ? worldToScreen(st.next.xy[0], st.next.xy[1]) : null) : null;   // OSM 路線的導航點用座標（xy）
   // 箭頭元素只建立一次，之後每幀只改屬性（不重建 DOM：手機上每幀的成本小很多）
   const layer = gid('navOverlay') || svg;                                                      // 獨立的一層（見 css）；找不到就畫在地圖上
   let g = gid('navMarker');
@@ -113,7 +94,7 @@ function stepCamera(T, sync) {
   const n = State.nav; if (!n || !n.cam || !State.base) return false;
   const dt = sync || !n.camT ? 1 : Math.min(0.5, (T - n.camT) / 1000); n.camT = T;
   const st = n.state || {}, fix = n.fix || {}, w = svg.clientWidth || 1, h = svg.clientHeight || 1, next = st.next, after = st.after;
-  const complex = !!(next && ((next.nodeIdx != null && uniqNbr(next.nodeIdx) >= 5) || (after && after.s - next.s < 120)));
+  const complex = !!(next && (after && after.s - next.s < 120));
   const spd = Number.isFinite(fix.speed) ? Math.max(0, fix.speed) : (st.eta && Number.isFinite(st.eta.vObs) ? st.eta.vObs : 0);   // 手機沒給速度時用引擎平滑後的實際速度
   const o = n.cam.step(dt, { speed: spd, heading: fix.heading ?? st.bearing ?? null, accuracy: fix.accuracy ?? 99,
     compass: n.compass ? n.compass.value : null, distToNext: st.distToNext ?? 1e9, next, complex, follow: n.follow, aspect: h / w });
@@ -148,7 +129,6 @@ function applyTilt(deg, anchorY) {
   for (const el of [svg, gid('navOverlay')]) if (el && el.style) { el.style.transformOrigin = `50% ${(anchorY * 100).toFixed(1)}%`; el.style.transform = css; }
   State.pitchCss = v ? { deg: v, s, oy: (svg.clientHeight || 0) * anchorY } : null;            // 指標座標反投影、圖磚範圍用（map-view.js）
 }
-const uniqNbr = v => { const s = new Set(); for (let k = State.adjOffset[v]; k < State.adjOffset[v + 1]; k++) s.add(State.adjTo[k]); return s.size; };
 // 使用者動了地圖：傾斜立刻放平（觸控／滑鼠座標換算才正確）
 export function camInteract() { const n = State.nav; if (n && n.cam && n.cam.tilt) { n.cam.interact(); if (State.cam) State.cam.tilt = 0; n.tiltApplied = null; applyTilt(0, n.camOut ? n.camOut.anchorY : 0.62); } }
 
@@ -211,12 +191,12 @@ export function stopFollow() { if (State.nav && State.nav.follow) { State.nav.fo
 export function startNavigation() {
   if (State.nav) return;
   const route = State.currentRoute;
-  if (!route || !(route.edgePath || route._osm) || getMode() === 'transit') { showStatus('請先規劃一條道路路線（大眾運輸不提供逐步 GPS 導航）', 'error'); return; }
+  if (!route || !route._osm || getMode() === 'transit') { showStatus('請先規劃一條道路路線（大眾運輸不提供逐步 GPS 導航）', 'error'); return; }
   const vk0 = getVehicleKey(), vk = PROMPT_PROFILE[vk0] ? vk0 : 'car';
   // 語音必須在這個使用者操作內初始化（iOS Safari／Android Chrome 限制）
   voice = new VoiceEngine({ enabled: settings.voiceOn, rate: settings.rate, volume: settings.volume, onState: s => { if (s.ready === false) toast('語音無法使用：' + (s.reason || '')); else if (s.voiceFound === false) toast('這個裝置沒有中文語音，語音提示可能無聲或使用預設語音'); } });
   voice.init(); ann = new AnnouncementManager(voice, { profileKey: vk, scale: settings.promptScale });
-  const gps = new GpsService(), engine = new NavigationEngine(), V = route._osm ? null : ensureVeh(vk0 === 'bus' ? 'car' : vk0);   // OSM 路線：每段時間由伺服器給（route._osm.timing），不需要本機路網的車種表
+  const gps = new GpsService(), engine = new NavigationEngine(), V = null;   // OSM 路線：每段時間由伺服器給（route._osm.timing），不需要本機路網的車種表
   State.nav = { engine, gps, voice, follow: true, fix: null, state: null, vk, first: true, rerouteBusy: false, planKey: ['shortest', 'pref'].includes(State.activeKey) ? State.activeKey : 'fastest' };   // 重新規劃沿用出發時選的路線種類
   for (const it of State.routeSet) it.visible = it.key === State.activeKey;                                // 導航中只顯示目前路線
   document.body.classList.add('navigating'); if (typeof CustomEvent !== 'undefined' && document.dispatchEvent) document.dispatchEvent(new CustomEvent('navstate', { detail: 'start' })); gid('navUI').hidden = false; gid('navRecenter').hidden = true; gid('navVoicePanel').hidden = true;
@@ -227,7 +207,7 @@ export function startNavigation() {
   if (settings.orient === 'heading') { State.nav.compass = new Compass(); State.nav.compass.start(); }                // 必須在按下「開始導航」的操作中要求權限（iOS）
   engine.start(route, generateManeuvers(route), V ? k => V.spd[k] / 3.6 : null, {
     model: (r, t, m) => new EtaModel(r, t, m, vkm, H), smoother,
-    onEdge: (k, meters, sec, t) => { H.add(typeof k === 'string' ? k : State.adjEid[k], meters, sec, t); } });   // OSM 路線的 k 是 'osm:<way id>'
+    onEdge: (k, meters, sec, t) => { H.add(k, meters, sec, t); } });   // OSM 路線的 k 是 'osm:<way id>'
   State.nav.tick = setInterval(() => { refreshTime(); if (State.nav && State.nav.trip && State.nav.state) State.nav.trip.pred(Date.now(), State.nav.state); }, 1000);
   gps.on('status', onGpsStatus); gps.on('fix', onFix); gps.on('reject', r => { if (r === 'jump') toast('已忽略異常定位跳點', 2000); });
   drawRoute(route, true); setNavZoom(); scheduleRender(); refreshUI();
@@ -245,7 +225,7 @@ async function requestReroute(fix) {
   const n = State.nav; if (!n || n.rerouteBusy) return; n.rerouteBusy = true; n.engine.rerouting = true; if (n.engine.status === 'navigating') n.engine._status('rerouting'); refreshUI();
   try {
     await new Promise(r => setTimeout(r, 0));
-    const r = State.currentRoute && State.currentRoute._osm ? await osmReroute(fix, n.planKey) : rerouteFromFix(fix);   // OSM 路線：伺服器從目前位置（含行進方向）重新規劃
+    const r = await osmReroute(fix, n.planKey);   // OSM 路線：伺服器從目前位置（含行進方向）重新規劃
     if (State.nav !== n) return;
     if (r.error) { toast(r.error); n.engine.rerouteFailed(); }
     else { n.reroutes = (n.reroutes || 0) + 1; if (n.trip) n.trip.event(Date.now(), 'rerouted'); State.currentRoute = r.route; State.routeSet = [r.item]; State.activeKey = r.item.key; n.engine.applyNewRoute(r.route, generateManeuvers(r.route)); drawRoute(r.route, false); }
@@ -264,22 +244,14 @@ function releaseWakeLock() { try { wakeLock && wakeLock.release(); } catch {} wa
 
 // ---------- 使用目前位置當起點（一次性定位；必須由使用者按鈕觸發）----------
 export function useMyLocation() {
-  if (!State.loaded && !osmOn()) { showStatus('請先載入路網', 'error'); return; }
+  if (!osmOn()) { showStatus('伺服器的全台道路圖尚未就緒，請稍候', 'error'); return; }
   if (!navigator.geolocation) { showStatus('此瀏覽器不支援定位', 'error'); return; }
   if (typeof isSecureContext !== 'undefined' && !isSecureContext) { showStatus('定位需要 HTTPS（或 localhost）', 'error'); return; }
   showStatus('正在取得目前位置…', 'loading');
   navigator.geolocation.getCurrentPosition(pos => {
     const c = pos.coords;
-    if (osmOn()) {                                                                                  // 全台 OSM：直接用定位點，規劃時伺服器吸附到最近的可用道路
-      const p = osmPoint(c.longitude, c.latitude, '目前位置'); setPoint(p, 'from'); osmNameFor(p, 'fromInfo');
-      showStatus(`📍 已用目前位置當起點（定位精度約 ${Math.round(c.accuracy)} m）` + (c.accuracy > 100 ? '<br>⚠ 精度不佳，建議移到空曠處或到設定開啟「精確位置」' : ''), c.accuracy > 100 ? 'loading' : 'success'); scheduleRender(); return;
-    }
-    const [wx, wy] = lonLatToWorld(c.longitude, c.latitude), idx = findNearestNode(wx, wy);
-    if (idx < 0) { showStatus('⚠ 目前位置附近找不到路網（可能不在路網範圍內）', 'error'); return; }
-    const nx = State.nodeXY[idx*5+2], ny = State.nodeXY[idx*5+3], dm = worldDistM(wx, wy, nx, ny);
-    if (dm > 500) { showStatus(`⚠ 目前位置離最近的路網節點 ${Math.round(dm)} m，已超出路網範圍`, 'error'); return; }
-    setPoint({ idx, lon: nx, lat: ny, id: State.nodeIds[idx] + '（目前位置）' }, 'from');
-    showStatus(`📍 已用目前位置當起點（定位精度約 ${Math.round(c.accuracy)} m，最近節點距離 ${Math.round(dm)} m）` + (c.accuracy > 100 ? '<br>⚠ 精度不佳，建議移到空曠處或到設定開啟「精確位置」' : ''), c.accuracy > 100 ? 'loading' : 'success');
+    const p = osmPoint(c.longitude, c.latitude, '目前位置'); setPoint(p, 'from'); osmNameFor(p, 'fromInfo');
+    showStatus(`📍 已用目前位置當起點（定位精度約 ${Math.round(c.accuracy)} m）` + (c.accuracy > 100 ? '<br>⚠ 精度不佳，建議移到空曠處或到設定開啟「精確位置」' : ''), c.accuracy > 100 ? 'loading' : 'success'); scheduleRender(); 
   }, e => showStatus(e.code === 1 ? '❌ 定位權限被拒絕，請到瀏覽器／系統設定允許此網站使用定位' : '❌ 無法取得目前位置：' + esc(e.message || ''), 'error'), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
 }
 

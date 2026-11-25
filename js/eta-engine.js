@@ -9,8 +9,6 @@
 // 不確定範圍：路段變異（市區 30%、快速道路 15～18%）＋ 路口與轉向變異，加上 10% 系統偏差；可信度依相對不確定度與資料完整度
 // 所有參數都是「基礎模型假設」，介面會標示；有真實行程紀錄後可用 tools/eta-eval.mjs 驗證與調整
 import { State } from './state.js';
-import { ensureRA } from './road-attrs.js';
-import { ensureVeh } from './vehicle.js';
 import { worldHaversine } from './geo.js';
 
 // 參數表（FLOW、DELAY、CV）放在 eta-params.js：伺服器端的 OSM 路線搜尋也用同一套，路線時間與導航 ETA 一致
@@ -21,44 +19,12 @@ function turnDelay(D, m) {
   if (!m) return 0; const L = m.dir === 'left';
   switch (m.turnType) { case 'turn': return L ? D.left : D.right; case 'slight': return L ? D.slightL : D.slightR; case 'sharp': return L ? D.sharpL : D.sharpR; case 'uturn': return D.uturn; default: return 0; }
 }
-const uniqDeg = v => { const s = new Set(); for (let k = State.adjOffset[v]; k < State.adjOffset[v + 1]; k++) s.add(State.adjTo[k]); return s.size; };
 
 // 一條路線的模型（規劃完成時建一次；之後每筆 GPS 只做 O(log n) 查表＋前方幾段的近程修正）
 // track：RouteTrack（幾何累積距離）；maneuvers：generateManeuvers 的結果；history：{ get(eid) → {mps, n} }（可省略）
 export class EtaModel {
   constructor(route, track, maneuvers, vk = 'car', history = null) {
-    if (route._osm) { this._initOsm(route, track, maneuvers, vk, history); return; }
-    const n = track.n, ep = route.edgePath, ra = ensureRA(), V = ensureVeh(vk === 'bus' ? 'car' : vk), F = FLOW[vk] || FLOW.car, D = DELAY[vk] || DELAY.car;
-    this.vk = vk; this.track = track; this.n = n;
-    // ① 每段的真實長度：路網邊長（adjW）與幾何長度一致時用邊長（道路有彎曲時較準），否則用幾何長度
-    const geo = new Float64Array(n - 1); let sumW = 0, sumG = 0;
-    for (let i = 0; i < n - 1; i++) { geo[i] = track.cum[i + 1] - track.cum[i]; sumG += geo[i]; sumW += State.adjW[ep[i]] || 0; }
-    const useW = sumG > 0 && sumW / sumG >= 0.95 && sumW / sumG <= 1.6;
-    this.lenSrc = useW ? '路網邊長' : '路線幾何長度';
-    // ② 每段時間、變異；每個節點的路口與轉向延遲
-    const byIdx = new Map(maneuvers.filter(m => m.turnType !== 'start' && m.turnType !== 'arrive' && m.turnType !== 'waypoint').map(m => [m.index, m]));
-    this.realCum = new Float64Array(n); this.cumT = new Float64Array(n); this.cumD = new Float64Array(n); this.cumVar = new Float64Array(n); this.cumSys = new Float64Array(n); this.edgeT = new Float64Array(n - 1);
-    let known = 0, hist = 0, turns = 0, junc = 0;
-    for (let i = 0; i < n - 1; i++) {
-      const k = ep[i], L = useW && geo[i] > 0 ? (State.adjW[k] || geo[i]) : geo[i], cl = ra.cls[k] ?? 0, lim = ra.limit[k];
-      const vModel = Math.max(0.8, (V.spd[k] / 3.6) * (F[cl] ?? F[0]));
-      let v = vModel; const h = history && State.adjEid[k] != null ? history.get(State.adjEid[k]) : null;
-      if (h && h.n >= 2 && h.mps > 0.5) { const w = Math.min(h.n, 10); v = (w * h.mps + 3 * vModel) / (w + 3); hist += L; }
-      if (isFinite(lim)) known += L;
-      const t = L / v; this.edgeT[i] = t;
-      this.realCum[i + 1] = this.realCum[i] + L; this.cumT[i + 1] = this.cumT[i] + t;
-      this.cumVar[i + 1] = this.cumVar[i] + (CV[cl] * t) ** 2; this.cumSys[i + 1] = this.cumSys[i] + 0.1 * t;
-      // 節點 i+1 的延遲（終點不算）：轉向＋路口
-      let d = 0, dv = 0;
-      if (i + 1 < n - 1) {
-        const m = byIdx.get(i + 1), td = turnDelay(D, m); if (td) { d += td; dv += (0.5 * td) ** 2; turns++; }
-        const deg = uniqDeg(route.path[i + 1]), jd = deg >= 4 ? D.j4 : deg === 3 ? D.j3 : 0; if (jd) { d += jd; dv += (0.8 * jd) ** 2; junc++; }
-      }
-      this.cumD[i + 1] = this.cumD[i] + d; this.cumVar[i + 1] += dv;
-    }
-    this.nodeDelay = i => this.cumD[i] - this.cumD[i - 1];
-    this.total = this.realCum[n - 1]; this.totalT = this.cumT[n - 1] + this.cumD[n - 1];
-    this.coverage = { limitKnown: this.total ? known / this.total : 0, history: this.total ? hist / this.total : 0, turns, junctions: junc, length: this.lenSrc };
+    this._initOsm(route, track, maneuvers, vk, history);           // v1.18：只有伺服器的 OSM 路線（舊路網的本機模型已移除）
   }
   // 伺服器 OSM 路線：每段行駛時間（timing.segS）、路口與轉彎延遲（timing.delays：[座標序號, 秒]）由伺服器用同一套參數算好；
   // 這裡只補上：真實長度（大圓距離）、變異（CV 依道路類別）、本機歷史速度（以 OSM way id 為鍵）

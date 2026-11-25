@@ -48,7 +48,7 @@ export function normalizeStopOfRoute(rows, { source = 'TDX Bus/StopOfRoute', fet
       let k = 2; while (byKey.has(`${key}#${k}`)) k++; key = `${key}#${k}`; cnt.add('同 SubRouteUID＋Direction 有不同站序（另存為獨立型態）');
     }
     const p = { id: key, mode: 'bus', routeUID: r.RouteUID ?? null, routeId: r.RouteID ?? null, subRouteUID: r.SubRouteUID ?? null, subRouteId: r.SubRouteID ?? null,
-      direction: r.Direction ?? null, name: zh(r.RouteName), subName: zh(r.SubRouteName), headsign: null,
+      direction: r.Direction ?? null, name: zh(r.RouteName) ?? (r.TaiwanTripName ? zh(r.TaiwanTripName) + (r.SubRouteName ? ' ' + zh(r.SubRouteName) : '') : zh(r.SubRouteName)), subName: zh(r.SubRouteName), headsign: null,   // 台灣好行沒有 RouteName，用 TaiwanTripName（濱海奇基線）＋SubRouteName（T99）
       operator: (r.Operators || []).map(o => o.OperatorID ?? o.OperatorCode ?? zh(o.OperatorName)).filter(Boolean)[0] ?? r.OperatorID ?? null, city: r.City ?? null,
       stops: uids, seqs, trips: [], freqs: [], runTimes: null, runSource: null, source, updatedAt: Number.isFinite(parseStamp(r.UpdateTime)) ? parseStamp(r.UpdateTime) : fetchedAt };
     patterns.push(p); byKey.set(key, p);

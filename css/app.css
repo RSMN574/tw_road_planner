@@ -74,34 +74,6 @@
   #placeholder.hidden { display: none; }
   #placeholder .icon { font-size: 48px; opacity: .3; }
 
-  #loader {
-    position: absolute; inset: 0; background: rgba(15,23,42,.95);
-    z-index: 9999; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; color: white;
-    font-size: 15px; gap: 20px; padding: 40px;
-  }
-  #loader.hidden { display: none; }
-  .spinner {
-    width: 50px; height: 50px; border: 4px solid rgba(255,255,255,.2);
-    border-top-color: #3b82f6; border-radius: 50%;
-    animation: spin .8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  #loader .progress { font-size: 12px; opacity: .7; text-align: center; line-height: 1.8; }
-
-  #fileZone {
-    margin-top: 8px; padding: 14px; border: 2px dashed #cbd5e1;
-    border-radius: 8px; text-align: center; font-size: 12px; color: #64748b;
-    cursor: pointer; transition: all .2s;
-  }
-  #fileZone:hover { border-color: #3b82f6; background: #f0f9ff; color: #3b82f6; }
-  #fileZone.hasFile { border-color: #22c55e; background: #f0fdf4; color: #16a34a; }
-  #fileZone input { display: none; }
-  #fileName { font-weight: 600; margin-top: 4px; word-break: break-all; }
-
-  .file-list { margin-top: 8px; font-size: 11px; color: #64748b; }
-  .file-list .ok { color: #16a34a; }
-  .file-list .missing { color: #dc2626; }
   .route-seg { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; cursor: pointer; }
   .route-seg:hover { stroke-width: 8; }
   #routeSvg path:not(.route-seg), #routeSvg text, #routeSvg circle { pointer-events: none; }
@@ -519,3 +491,19 @@ body.via-pending #dsTop { box-shadow: 0 0 0 3px #7B1FA2, var(--sh-2); }
 .via-c { fill: #7B1FA2; stroke: #fff; stroke-width: 2.5; } .via-mk text { fill: #fff; font-size: 12px; font-weight: 700; pointer-events: none; }
 .via-mk.done .via-c { fill: #9AA0A6; }
 .po-via { width: 100%; margin-top: var(--sp-2); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* ===== v1.15 即時路況（js/traffic-layer.js）===== */
+.ds-traffic { display: flex; }
+.ds-traffic i { flex: none; } .ds-traffic i.free { background: #1E8E3E; } .ds-traffic i.slow { background: #F9AB00; } .ds-traffic i.jam { background: #D93025; } .ds-traffic i.closed { background: #3C4043; }
+.tf-row { margin-bottom: var(--sp-2); }
+.tf-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: var(--fs-xs); color: var(--c-text-2); margin: 4px 0 0 26px; }
+.tf-legend small { flex-basis: 100%; }
+.tf-key { display: inline-flex; align-items: center; gap: 4px; } .tf-key i { width: 16px; height: 4px; border-radius: 2px; display: inline-block; }
+
+/* ===== v1.17 停車場剩餘車位、充電站空槍（js/poi.js）===== */
+.po-live { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; white-space: normal !important; }
+.po-lv { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 8px; line-height: 18px; color: var(--c-text-2); background: var(--c-surface-2); }
+.po-lv.good { color: var(--c-good); background: color-mix(in srgb, var(--c-good) 14%, transparent); }
+.po-lv.warn { color: var(--c-slow); background: color-mix(in srgb, var(--c-slow) 16%, transparent); }
+.po-lv.bad { color: var(--c-jam); background: color-mix(in srgb, var(--c-jam) 12%, transparent); }
+.po-lv.na, .po-lv.wait { font-weight: 400; } .po-lv-t { font-size: 11px; color: var(--c-text-3); }

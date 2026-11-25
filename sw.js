@@ -1,8 +1,8 @@
-// sw.js — Service Worker：離線快取靜態資源與已載入的路網資料
+// sw.js — Service Worker：離線快取靜態資源與看過的 OSM 地圖圖磚
 // 策略：頁面（導航請求）網路優先、失敗用快取；js/css/圖示 stale-while-revalidate；data/*.json 同樣 SWR（大檔，失敗不影響使用）；
 // 跨網域（TDX、代理）與非 GET 一律不攔截——即時資料絕不從快取回放，離線時前端會明確顯示「離線」。
 // 伺服器 API（api/v1/…）不攔截（路線、健康狀態每次都問伺服器）；只有 OSM 地圖圖磚（網址帶圖檔版本）快取優先，最多留 TILE_MAX 張，離線時看過的地圖仍可顯示
-const VERSION = 'taiwantong-v1.4.0', CORE = `${VERSION}-core`, RUNTIME = `${VERSION}-rt`, TILES = `${VERSION}-tiles`, TILE_MAX = 3000;
+const VERSION = 'taiwantong-v1.18.0', CORE = `${VERSION}-core`, RUNTIME = `${VERSION}-rt`, TILES = `${VERSION}-tiles`, TILE_MAX = 3000;
 const SHELL = ['./', 'index.html', 'css/app.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CORE).then(c => Promise.allSettled(SHELL.map(u => c.add(u)))).then(() => self.skipWaiting())); });

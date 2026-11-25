@@ -1,19 +1,20 @@
 // nav-eta.mjs — 導航 ETA、剩餘距離、相機：12 項情境＋與舊版（test/fixtures/legacy-navigation.mjs）比較誤差
 // 地面真值與 GPS 都是模擬的（見 eta-sim.mjs），固定種子，可重現。數字只代表這套模擬，不代表真實道路。
+// v1.18：路線是伺服器 OSM 格式的合成路線（每段時間與路口延遲照伺服器的公式），舊的本機路網已移除；偏航後的「伺服器重新規劃」用模擬的回應。
 import { ok, done } from './helpers.mjs';
 await import('../js/main.js');
-const M = { S: (await import('../js/state.js')).State, buildGraph: (await import('../js/loader.js')).buildGraph, loadRoadTable: (await import('../js/road-attrs.js')).loadRoadTable,
-  tw: (await import('../js/geo.js')).lonLatToTWD97, ensureRA: (await import('../js/road-attrs.js')).ensureRA, GpsFilter: (await import('../js/gps-filter.js')).GpsFilter };
+const M = { S: (await import('../js/state.js')).State, GpsFilter: (await import('../js/gps-filter.js')).GpsFilter };
+M.S.coordType = 'wgs84';
 const { makeCity, truthDrive, runTrip, stats, fmt, ll } = await import('./eta-sim.mjs');
 const { NavigationEngine } = await import('../js/navigation.js'), { NavigationEngine: Legacy } = await import('./fixtures/legacy-navigation.mjs');
-const { EtaModel, EtaSmoother } = await import('../js/eta-engine.js'), { FLOW } = await import('../js/eta-params.js'), { generateManeuvers } = await import('../js/analysis.js'), { ensureVeh } = await import('../js/vehicle.js');
-const { CameraController } = await import('../js/camera.js'), { EdgeHistory } = await import('../js/trip-log.js'), { rerouteFromFix } = await import('../js/nav-ui.js');
+const { EtaModel, EtaSmoother } = await import('../js/eta-engine.js'), { generateManeuvers } = await import('../js/analysis.js');
+const { CameraController } = await import('../js/camera.js'), { EdgeHistory } = await import('../js/trip-log.js');
 const quiet = f => { const a = console.info, b = console.warn; console.info = console.warn = () => {}; try { return f(); } finally { console.info = a; console.warn = b; } };
 const city = quiet(() => makeCity(M, { n: 14 })), S = M.S;
-const mk = (route, vk = 'car', o = {}) => { const V = ensureVeh(vk), e = new NavigationEngine(); e.start(route, generateManeuvers(route), k => V.spd[k] / 3.6, { model: (r, t, m) => new EtaModel(r, t, m, vk, o.history || null), smoother: new EtaSmoother(), onEdge: o.onEdge }); return e; };
-const mkOld = (route, vk = 'car') => { const V = ensureVeh(vk), e = new Legacy(); e.start(route, generateManeuvers(route), k => V.spd[k] / 3.6); return e; };
+const mk = (route, vk = 'car', o = {}) => { const e = new NavigationEngine(); e.start(route, generateManeuvers(route), null, { model: (r, t, m) => new EtaModel(r, t, m, vk, o.history || null), smoother: new EtaSmoother(), onEdge: o.onEdge }); return e; };
+const mkOld = (route, vk = 'car') => { const e = new Legacy(); e.start(route, generateManeuvers(route), city.freeMps(route, vk)); return e; };   // 舊版：全程以速限（運具上限）行駛
 const avgStats = list => { const a = k => list.reduce((p, s) => p + s[k], 0) / list.length; return { n: a('n'), maeS: a('maeS'), mape: a('mape'), bias: a('bias'), distMaeM: a('distMaeM'), distMaxM: Math.max(...list.map(s => s.distMaxM)), etaJumpP95S: a('etaJumpP95S'), etaJumpMaxS: Math.max(...list.map(s => s.etaJumpMaxS)), coverage: a('coverage') }; };
-const compare = (ids, vk, tOpt = {}, rOpt = {}, seeds = [1, 2, 3, 4, 5]) => { const route = city.routeOf(ids), res = { old: [], new: [] };
+const compare = (ids, vk, tOpt = {}, rOpt = {}, seeds = [1, 2, 3, 4, 5]) => { const route = city.routeOf(ids, vk), res = { old: [], new: [] };
   for (const sd of seeds) { const tr = truthDrive(M, city, ids, { seed: sd, vk, ...tOpt }); res.old.push(runTrip(M, tr, mkOld(route, vk), { seed: sd + 10, ...rOpt }).stats); res.new.push(runTrip(M, tr, mk(route, vk), { seed: sd + 10, ...rOpt }).stats); }
   return { old: avgStats(res.old), new: avgStats(res.new) }; };
 const report = (name, r) => { console.log(`   ${name}｜舊：${fmt(r.old)}`); console.log(`   ${name}｜新：${fmt(r.new)}`); };
@@ -22,17 +23,17 @@ const base = city.manhattan([[0, 1], [9, 1], [9, 11], [13, 11]]), baseRoute = ci
 
 console.log('⓪ 模型本身');
 { const T = new (await import('../js/mapmatch.js')).RouteTrack(baseRoute), m = new EtaModel(baseRoute, T, generateManeuvers(baseRoute), 'car');
-  ok('剩餘距離用沿路線的累積距離（＝路網邊長總和）', Math.abs(m.total - baseRoute.distance) < 1 && m.coverage.length === '路網邊長', `${m.total.toFixed(0)} m`);
-  ok('包含轉向延遲與路口等待', m.coverage.turns === 2 && m.coverage.junctions > 10 && m.cumD[m.n - 1] > 100, `轉向 ${m.coverage.turns}、路口 ${m.coverage.junctions}、延遲合計 ${m.cumD[m.n - 1].toFixed(0)} 秒`);
-  const free = baseRoute.edgePath.reduce((a, k) => a + 250 / (ensureVeh('car').spd[k] / 3.6), 0);
+  ok('剩餘距離用沿路線的累積距離（OSM 幾何的大圓距離；與合成路線的平面距離差 < 0.5%）', Math.abs(m.total - baseRoute.distance) < baseRoute.distance * 0.005 && /OSM/.test(m.coverage.length), `${m.total.toFixed(0)} m`);
+  ok('包含轉向延遲與路口等待（伺服器算好的 delays）', m.coverage.turns === 2 && m.coverage.junctions > 10 && m.cumD[m.n - 1] > 100, `轉向 ${m.coverage.turns}、路口 ${m.coverage.junctions}、延遲合計 ${m.cumD[m.n - 1].toFixed(0)} 秒`);
+  const fm = city.freeMps(baseRoute), free = baseRoute.edgePath.reduce((a, k) => a + (T.cum[k + 1] - T.cum[k]) / fm(k), 0);
   ok('比「全程以速限行駛」保守（舊算法）', m.totalT > free * 1.3, `${(m.totalT / 60).toFixed(1)} 分 vs 舊 ${(free / 60).toFixed(1)} 分`);
   const r0 = m.remaining(0); ok('有不確定範圍與可信度', r0.lowS < r0.remainingS && r0.highS > r0.remainingS && ['high', 'medium', 'low'].includes(r0.confidence), `${(r0.lowS / 60).toFixed(0)}～${(r0.highS / 60).toFixed(0)} 分、可信度 ${r0.confidence}`);
   ok('交通延遲沒有資料 → 0（不假造）', r0.parts.traffic === 0);
-  const h = new EdgeHistory(null); for (const k of baseRoute.edgePath) for (let i = 0; i < 4; i++) h.add(S.adjEid[k], 250, 25);   // 自己開過：10 m/s
+  const h = new EdgeHistory(null); for (const k of baseRoute.edgePath) for (let i = 0; i < 4; i++) h.add(baseRoute._segKey(k), 50, 5);   // 自己開過：10 m/s（鍵＝OSM way id）
   const mh = new EtaModel(baseRoute, T, generateManeuvers(baseRoute), 'car', h);
   ok('有本機歷史速度時與模型加權（歷史 10 m/s 比模型快 → 時間變短）', mh.cumT[mh.n - 1] < m.cumT[m.n - 1] && mh.coverage.history > 0.99);
-  const mw = new EtaModel(baseRoute, T, generateManeuvers(baseRoute), 'walk'), mb = new EtaModel(baseRoute, T, generateManeuvers(baseRoute), 'bike');
-  ok('不同運具不同模型（步行 > 腳踏車 > 汽車）', mw.totalT > mb.totalT && mb.totalT > m.totalT, `步行 ${(mw.totalT / 60).toFixed(0)}、腳踏車 ${(mb.totalT / 60).toFixed(0)}、汽車 ${(m.totalT / 60).toFixed(0)} 分`);
+  const rw = city.routeOf(base, 'walk'), rb = city.routeOf(base, 'bike'), mw = new EtaModel(rw, T, generateManeuvers(rw), 'walk'), mb = new EtaModel(rb, T, generateManeuvers(rb), 'bike');
+  ok('不同運具不同模型（伺服器依運具算的時間：步行 > 腳踏車 > 汽車）', mw.totalT > mb.totalT && mb.totalT > m.totalT, `步行 ${(mw.totalT / 60).toFixed(0)}、腳踏車 ${(mb.totalT / 60).toFixed(0)}、汽車 ${(m.totalT / 60).toFixed(0)} 分`);
   const sm = new EtaSmoother(); sm.update(1e6, 0, 600); const a1 = sm.update(1e6 + 10e3, 1000, 600);
   ok('平滑器：小變動（10 秒）只跟一點點', Math.abs(a1 - 1e6) < 2e3);
   let x; for (let i = 0; i < 4; i++) x = sm.update(1e6 + 300e3, 2000 + i * 1000, 600); ok('平滑器：持續同方向的大變動（5 分）會快速跟上', x - 1e6 > 200e3, `${((x - 1e6) / 1000).toFixed(0)} 秒`);
@@ -86,25 +87,25 @@ console.log('⑤ 路線連續轉彎（樓梯狀，12 個轉彎）');
   const st = mk(city.routeOf(stair)); ok('轉向延遲逐一計入（11 個轉彎）', st.model.coverage.turns === 11, String(st.model.coverage.turns));
 }
 
-console.log('⑥ 偏航後重新規劃');
-{ const S0 = M.S; S0.planCache && S0.planCache.clear(); S0.toPoint = { idx: city.idx('n13_11'), lon: 0, lat: 0, id: 'n13_11' }; S0.fromPoint = { idx: city.idx('n0_1'), lon: 0, lat: 0, id: 'n0_1' };
-  const { el } = await import('./helpers.mjs'); el('mode').value = 'car'; el('goal').value = 'compare'; el('pref').value = 'fast'; el('prefA').value = '1'; el('prefB').value = '0'; el('prefD').value = '0';
-  // 本來在 (5,1) 要往北轉，結果直走。第 1 趟：找出系統重新規劃的路線；第 2 趟：真值改成「偏離後照新路線開」，量新路線上的剩餘距離
-  const route = city.routeOf(city.manhattan([[0, 1], [5, 1], [5, 11], [13, 11]])), rev = new Map();
-  for (let i = 0; i < city.n; i++) for (let j = 0; j < city.n; j++) rev.set(city.idx(city.id(i, j)), [i, j]);
-  const pass = truthIds => { const tr = truthDrive(M, city, truthIds, { seed: 6 }), e = mk(route), f = new M.GpsFilter(), rows = []; let req = null, applied = null, nr = null;
+console.log('⑥ 偏航後重新規劃（伺服器回應用模擬的：從目前位置沿路往前，到下一個路口往北，再往東到終點）');
+{ // 本來在 (5,1) 要往北轉，結果直走。第 1 趟：找出重新規劃的路線；第 2 趟：真值改成「偏離後照新路線開」，量新路線上的剩餘距離
+  const route = city.routeOf(city.manhattan([[0, 1], [5, 1], [5, 11], [13, 11]])), DEST = [13, 11];
+  // 模擬 /api/v1/osm/route：起點＝定位投影到東西向道路上的位置（小數座標），先到前方的路口，再往北、往東
+  const server = fix => { const x = (fix.lon - city.C.LON0) * city.C.mLon / city.sp, ui = Math.ceil(x + 0.05); if (ui > DEST[0]) return null;
+    const nodes = [[x, 1], ...city.C.manhattan([[ui, 1], [ui, DEST[1]], DEST])]; return { r: city.C.route(nodes), ui }; };
+  const pass = truthIds => { const tr = truthDrive(M, city, truthIds, { seed: 6 }), e = mk(route), f = new M.GpsFilter(), rows = []; let req = null, applied = null, nr = null, ui = null;
     e.on((t, s) => { if (t === 'reroute-request' && !req) req = s.fix; });
     for (let k = 0; k <= tr.T + 5; k++) {
       const { s } = tr.at(Math.min(k, tr.T)), [x, y] = tr.pos(s), [lo, la] = ll(x, y), r = f.process({ lat: la, lon: lo, accuracy: 6, speed: null, heading: NaN, timestamp: 1.7e12 + k * 1000 }); if (!r.accepted) continue;
       e.update(r.fix);
-      if (req && !applied) { const rr = rerouteFromFix(req); if (!rr.error) { nr = rr.route; e.applyNewRoute(nr, generateManeuvers(nr)); applied = { k, s }; } }
+      if (req && !applied) { const rr = server(req); if (rr) { nr = rr.r; ui = rr.ui; e.applyNewRoute(nr, generateManeuvers(nr)); applied = { k, s }; } }
       if (applied) rows.push({ k, err: Math.abs(e.state.remainingM - (tr.L - s)), st: e.state.status });
       if (e.state.status === 'arrived') break;
     }
-    return { applied, rows, nr }; };
+    return { applied, rows, nr, ui }; };
   const p1 = pass(city.manhattan([[0, 1], [8, 1], [8, 11], [13, 11]]));
   ok('偏離後發出重新規劃並換上新路線', !!p1.applied && !!p1.nr, p1.applied ? `第 ${p1.applied.k} 秒、新路線 ${p1.nr.distance.toFixed(0)} m` : '');
-  const [ui, uj] = rev.get(p1.nr.path[0]), ids2 = [...city.manhattan([[0, 1], [ui, uj]]), ...p1.nr.path.slice(1).map(k => city.id(...rev.get(k)))], p2 = pass(ids2);
+  const ids2 = city.manhattan([[0, 1], [p1.ui, 1], [p1.ui, DEST[1]], DEST]), p2 = pass(ids2);
   ok('第 2 趟在同一時間重新規劃（真值前段相同）', p2.applied && p2.applied.k === p1.applied.k);
   const later = p2.rows.filter(r => r.k >= p2.applied.k + 10);
   ok('換路線後進度重新起算、沿新路線的剩餘距離正確（10 秒後誤差 < 60 m）', later.length > 0 && later.every(r => r.err < 60), later.length ? `最大 ${Math.max(...later.map(r => r.err)).toFixed(0)} m` : '');
@@ -112,11 +113,10 @@ console.log('⑥ 偏航後重新規劃');
 }
 
 console.log('⑦ 長距離（30×30 格、約 14 km）');
-{ const big = quiet(() => makeCity(M, { n: 30 })), ids = big.manhattan([[0, 2], [26, 2], [26, 25], [29, 25]]), route = big.routeOf(ids), r = { old: [], new: [] };
+{ const big = makeCity(M, { n: 30 }), ids = big.manhattan([[0, 2], [26, 2], [26, 25], [29, 25]]), route = big.routeOf(ids), r = { old: [], new: [] };
   for (const sd of [1, 2, 3]) { const tr = truthDrive(M, big, ids, { seed: sd }); r.old.push(runTrip(M, tr, mkOld(route), { seed: sd + 10 }).stats); r.new.push(runTrip(M, tr, mk(route), { seed: sd + 10 }).stats); }
   const R = { old: avgStats(r.old), new: avgStats(r.new) }; report('長距離', R); REPORT.push(['長距離 14 km', R]);
   ok('長距離：新 MAPE < 舊版、且 < 15%', R.new.mape < R.old.mape && R.new.mape < 15, R.new.mape.toFixed(1) + '%');
-  quiet(() => makeCity(M, { n: 14 }));
 }
 const baseRoute2 = city.routeOf(base);
 

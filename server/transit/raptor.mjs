@@ -133,7 +133,7 @@ function finishItinerary(ctx, legs, { date, t0, egress, lastStop, departMs }) {
     if (l.timing.dayUncertain) notes.add(`${MODE_LABEL[p.mode]}${p.name ? ' ' + p.name : ''}：資料沒有註明適用星期`);
     if (l.timing.delayMin) notes.add(`台鐵 ${l.trainNo} 次即時誤點 ${l.timing.delayMin} 分（已計入）`);
     modes.push(p.mode);
-    out.push({ type: l.type, mode: p.mode, operator: p.operator, routeName: p.name, routeUID: p.routeUID, direction: p.direction, headsign: l.timing.headsign || p.headsign || null, tripId: l.tripId, trainNo: l.trainNo, trainType: l.timing.trainType || null,
+    out.push({ type: l.type, mode: p.mode, operator: p.operator, routeName: p.busKind && p.name ? p.busKind + ' ' + (p.tourName && p.tourName !== p.name ? p.tourName + '（' + p.name + '）' : p.name) : p.name, busKind: p.busKind || null, routeUID: p.routeUID, direction: p.direction, headsign: l.timing.headsign || p.headsign || null, tripId: l.tripId, trainNo: l.trainNo, trainType: l.timing.trainType || null,
       from: st(l.fromStop), to: st(l.toStop), departAt: iso(date, l.depS), arriveAt: iso(date, l.arrS), durationS: Math.round(l.arrS - l.depS), stops: stops.length - 1, stopList: stops, timing: l.timing, fare,
       geometry: ctx.rideGeometry ? ctx.rideGeometry(p, stops) : { coords: stops.map(s => [s.lon, s.lat]), source: '站與站之間直線（沒有線型資料）' } });
     t = l.arrS;

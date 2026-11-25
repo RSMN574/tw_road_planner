@@ -3,17 +3,6 @@ import { State } from './state.js';
 
 export const isGeo = () => State.coordType === 'wgs84';
 
-// 「權重單位 / 座標單位」的下界（校準值）
-
-
-export function nodeDist(a, b) {           // 世界座標距離：projected 歐氏；wgs84 haversine（公尺）
-  const x1 = State.nodeXY[a*5+2], y1 = State.nodeXY[a*5+3], x2 = State.nodeXY[b*5+2], y2 = State.nodeXY[b*5+3];
-  if (!isGeo()) return Math.hypot(x2 - x1, y2 - y1);
-  const R = Math.PI/180, dLat = (y2 - y1)*R, dLon = (x2 - x1)*R;
-  const h = Math.sin(dLat/2)**2 + Math.cos(y1*R)*Math.cos(y2*R)*Math.sin(dLon/2)**2;
-  return 12742000 * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
 // projUnit：道路圖座標 1 單位 = 幾公尺
 
 
@@ -51,13 +40,6 @@ export function worldDistM(x1, y1, x2, y2) {
 export function worldHaversine(x1, y1, x2, y2) {
   const R = Math.PI/180, h = Math.sin((y2-y1)*R/2)**2 + Math.cos(y1*R)*Math.cos(y2*R)*Math.sin((x2-x1)*R/2)**2;
   return 12742000 * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-// 座標假設：經緯度對調？單位(m/座標單位)？TWD67 平移(公尺)
-
-export function autoUnit() {
-  let mx = 0; for (let i = 0; i < State.N; i += 997) mx = Math.max(mx, Math.abs(State.nodeXY[i*5+2]), Math.abs(State.nodeXY[i*5+3]));
-  return (!isGeo() && mx > 5e7) ? 0.01 : 1;                         // 座標過大 → 單位是 cm
 }
 
 // GPS（WGS84 經緯度）→ 道路圖座標。道路圖是經緯度就直接用；是 TWD97 就轉換並除以單位（cm 資料 projUnit=0.01）

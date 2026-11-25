@@ -18,119 +18,44 @@
 <body>
 
 <div id="panel">
-  <h1><span id="sheetHandle">台中道路圖 <small id="stats">未載入</small></span><span class="tools"><button id="installBtn" type="button" hidden title="加入主畫面">⤓</button><button id="themeBtn" type="button" title="深色／淺色">◐</button></span></h1>
+  <h1><span id="sheetHandle">台灣道路圖 <small id="stats">連線中…</small></span><span class="tools"><button id="installBtn" type="button" hidden title="加入主畫面">⤓</button><button id="themeBtn" type="button" title="深色／淺色">◐</button></span></h1>
   <div class="body">
     <div class="row">
-      <label>路網資料（分檔 JSON）</label>
-      <div id="fileZone">
-        <div>📂 點此選擇 JSON 檔案（可多選）</div>
-        <div id="fileName">或自動嘗試載入 ./data/graph/…</div>
-        <input type="file" id="fileInput" accept=".json,application/json" multiple>
-      </div>
-      <div class="file-list" id="fileList"></div>
-    </div>
-
-    <hr>
-
-    <div class="row">
       <label>起點</label>
-      <input id="from" type="text" placeholder="搜尋道路名稱，或輸入緯度,經度" autocomplete="off">
+      <input id="from" type="text" placeholder="搜尋地點、路名，或輸入緯度,經度" autocomplete="off">
       <button id="myLoc" type="button" style="background:#0f766e;margin-top:6px;font-size:12px;padding:6px;">📍 使用目前位置當起點</button>
       <div class="search-result" id="fromResult"></div>
       <div class="hint" id="fromInfo">未設定</div>
     </div>
     <div class="row">
       <label>終點</label>
-      <input id="to" type="text" placeholder="搜尋道路名稱，或輸入緯度,經度" autocomplete="off">
+      <input id="to" type="text" placeholder="搜尋地點、路名，或輸入緯度,經度" autocomplete="off">
       <div class="search-result" id="toResult"></div>
       <div class="hint" id="toInfo">未設定</div>
     </div>
-    <div class="row" id="osmRow" hidden><label style="font-size:12px;display:block"><input type="checkbox" id="osmOn" checked style="width:auto"> 🗺 使用全台 OSM 道路圖（伺服器計算路線）</label>
-      <div class="hint" id="osmHint"></div></div>
+    <div class="row" id="osmRow"><div class="hint" id="osmHint"></div></div>
     <div class="row"><label>交通方式</label>
       <select id="mode" style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">
-        <option value="car" selected>🚗 汽車</option><option value="heavy">🏍 重型機車（不走國道）</option><option value="moto">🛵 一般機車（不走國道、快速道路）</option><option value="bike">🚲 腳踏車（優先自行車道）</option><option value="walk">🚶 步行</option><option value="transit">🚌 大眾運輸（公車＋捷運）</option></select>
-      <label id="tollRow" style="font-size:12px;display:block;margin-top:6px"><input type="checkbox" id="avoidToll" style="width:auto"> 避開國道（只有國道收費；費率未納入計算）</label>
+        <option value="car" selected>🚗 汽車</option><option value="heavy">🏍 重型機車（不走國道）</option><option value="moto">🛵 一般機車（不走國道、快速道路）</option><option value="bike">🚲 腳踏車（優先自行車道）</option><option value="walk">🚶 步行</option><option value="transit">🚌 大眾運輸（台鐵、高鐵、捷運、公車）</option></select>
       <div id="modeHint" style="font-size:11px;color:#64748b;margin-top:2px"></div></div>
-    <div class="row"><label>目標</label>
-      <select id="goal" style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px"></select></div>
-    <div class="row" id="roadOnly"><label>避開道路（選填，藍線用）</label>
-      <input id="avoid" type="text" placeholder="例：台灣大道（比對路名，含子字串）" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px"></div>
     <div class="row" id="transitOnly" style="display:none"><label>大眾運輸</label>
-      <label style="font-size:12px;display:flex;justify-content:space-between;align-items:center;margin-top:6px">出發時間（留空＝現在）<input type="time" id="depTime" style="width:110px"></label>
-      <button id="tdxRefresh" type="button" style="background:#475569;margin-top:6px;font-size:12px;padding:6px;">重新整理即時資料</button>
-      <select id="ttAlgo" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px"><option value="raptor">RAPTOR（轉乘次數 × 抵達時間 Pareto）</option><option value="csa">CSA（最早抵達）</option></select>
-      <button id="ttGo" type="button" style="background:#0f766e;margin-top:6px;font-size:12px;padding:6px;">以時刻表搜尋</button></div>
+      <label style="font-size:12px;display:flex;justify-content:space-between;align-items:center;margin-top:6px">出發時間（留空＝現在）<input type="time" id="depTime" style="width:110px"></label></div>
     <button id="go" disabled>規劃路線</button>
     <button id="startNav" type="button" disabled style="background:#16a34a;margin-top:8px">▶ 開始導航（使用手機 GPS）</button>
     <div class="hint" id="navHint">導航只在網頁前景執行；需要 HTTPS（或 localhost）與定位權限。</div>
     <button id="clear" style="background:#64748b;margin-top:8px;font-size:12px;padding:6px;">清除</button>
-    <button id="nearbyBtn" style="background:#64748b;margin-top:8px;font-size:12px;padding:6px;">顯示周邊道路</button>
     <div id="status"></div>
     <div id="routes"></div>
-    <div id="busBox"></div>
-    <div id="ttBox"></div>
     <div id="analysisBox"></div>
     <div id="roadInfo"></div>
-    <div id="hlInfo" style="display:none;margin-top:8px;font-size:12px;color:#1d4ed8"></div>
     <div id="steps"></div>
-    <div id="stopBox"></div>
     <hr>
-        <div class="row"><label>地圖圖層與點擊</label>
+    <div class="row"><label>點擊地圖</label>
       <select id="clickMode" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">
-        <option value="pick" selected>點擊地圖：設定起點／終點</option><option value="inspect">點擊地圖：查詢道路資訊</option></select>
-      <label style="font-size:12px;display:block;margin-top:6px"><input type="checkbox" id="showWidth" style="width:auto"> 道路寬度分級圖層（放大後顯示）</label>
-      <div style="font-size:11px;color:#475569;line-height:1.7">
-        <span style="color:#166534">━</span> ≥12 m　<span style="color:#65a30d">━</span> 8–12　<span style="color:#f59e0b">━</span> 6–8　<span style="color:#ef4444">━</span> &lt;6　<span style="color:#9ca3af">━</span> 未知　<span style="color:#7c3aed">┅</span> 公車禁行</div>
-      <div id="widthHint" style="font-size:11px;color:#b45309"></div></div>
-    <details class="adv"><summary style="cursor:pointer;font-size:13px;font-weight:600;margin:6px 0">進階設定（偏好、演算法、營運規劃）</summary>
-      <div class="row"><label>成本偏好（汽車／機車／腳踏車／步行）</label>
-      <select id="pref" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;margin-top:4px">
-        <option value="balanced" selected>偏好：均衡</option><option value="fast">偏好：最快</option><option value="short">偏好：最短</option><option value="safe">偏好：安全優先</option><option value="custom">偏好：自訂</option></select>
-      <div style="font-size:11px;color:#64748b;margin-top:2px">成本 = α·時間 + β·距離 + δ·風險（候車時間 γ 只用在大眾運輸）</div>
-      <div style="display:flex;gap:6px;font-size:12px;margin-top:2px">
-        <label>α<input id="prefA" type="number" step="0.1" min="0" value="1" style="width:100%"></label><label>β<input id="prefB" type="number" step="0.1" min="0" value="0.5" style="width:100%"></label><label>δ<input id="prefD" type="number" step="0.1" min="0" value="0.5" style="width:100%"></label></div></div>
-          <div class="row"><label>演算法</label>
-      <select id="routerMode" style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">
-        <option value="dijkstra">Dijkstra</option><option value="astar">A*</option><option value="bidir">雙向 Dijkstra</option><option value="mlevel">多層級 Dijkstra（近似，適合大圖）</option></select></div>
-          <div class="row"><label>替代路線數 K（Yen）</label><input type="number" id="kPaths" value="5" min="2" max="8"></div>
-      <div class="row"><label>營運規劃（公車業者／站點設計用，一般使用者不需要）</label>
-        <label style="font-size:12px;display:block"><input type="checkbox" id="opsMode" style="width:auto"> 啟用：道路適宜性／YouBike／站牌多目標候選</label>
-        <label style="font-size:12px;margin-top:6px;display:block"><input type="checkbox" id="busMode" checked style="width:auto"> 營運規劃時，排除自行車／步行專用道</label>
-      <details style="margin-top:6px;font-size:12px"><summary style="cursor:pointer">評分權重（可調整，自動正規化）</summary>
-        <label style="display:flex;justify-content:space-between;margin-top:4px">道路適宜性 <input type="number" id="w_suit" value="35" min="0" max="100" style="width:64px"></label>
-        <label style="display:flex;justify-content:space-between;margin-top:4px">YouBike 覆蓋 <input type="number" id="w_ub" value="20" min="0" max="100" style="width:64px"></label>
-        <label style="display:flex;justify-content:space-between;margin-top:4px">路線距離 <input type="number" id="w_dist" value="20" min="0" max="100" style="width:64px"></label>
-        <label style="display:flex;justify-content:space-between;margin-top:4px">轉彎複雜度 <input type="number" id="w_turn" value="10" min="0" max="100" style="width:64px"></label>
-        <label style="display:flex;justify-content:space-between;margin-top:4px">既有公車站牌覆蓋 <input type="number" id="w_bus" value="15" min="0" max="100" style="width:64px"></label>
-      </details></div>
-      <div class="row"><label>建議公車站點</label>
-      <label style="font-size:12px;display:flex;justify-content:space-between;align-items:center"><span><input type="checkbox" id="showStops" checked style="width:auto"> 顯示於地圖</span>
-        <span>目標站距 <input type="number" id="stopGap" value="400" min="150" max="1500" step="50" style="width:64px"> m</span></label></div>
-    </details>
-    <details class="adv"><summary style="cursor:pointer;font-size:13px;font-weight:600;margin:6px 0">資料與連線（道路表、YouBike、公車、捷運、TDX）</summary>
+        <option value="pick" selected>點擊地圖：設定起點／終點</option><option value="inspect">點擊地圖：查詢道路資訊</option></select></div>
+    <details class="adv"><summary style="cursor:pointer;font-size:13px;font-weight:600;margin:6px 0">資料與連線</summary>
       <div class="hint" id="serverStat" style="margin:4px 0 8px"></div>
-          <div class="row"><label>道路屬性表（路寬／型態，依「路名」對應，選填）</label>
-      <input type="file" id="rtFile" accept=".json,application/json" style="font-size:12px">
-      <div id="rtStat" style="font-size:12px;color:#64748b;margin-top:2px"></div></div>
-          <div class="row"><label>YouBike 資料（JSON，選填）</label>
-      <input type="file" id="ubFile" accept=".json,application/json" style="font-size:12px">
-      <div id="ubStat" style="font-size:12px;color:#64748b;margin-top:2px"></div>
-      <label style="font-size:12px">YouBike 覆蓋半徑 <select id="ubR"><option>100</option><option selected>300</option><option>500</option></select> m</label></div>
-          <div class="row"><label>公車資料（graph.json，選填）</label>
-      <input type="file" id="busFile" accept=".json,application/json" style="font-size:12px">
-      <div id="busStat" style="font-size:12px;color:#64748b;margin-top:2px"></div></div>
-          <div class="row"><label>捷運資料（metro.json，選填）</label>
-      <input type="file" id="metroFile" accept=".json,application/json" style="font-size:12px">
-      <div id="metroStat" style="font-size:12px;color:#64748b;margin-top:2px"></div></div>
-          <div class="row"><label>TDX 即時資料設定</label>
-      <details style="font-size:12px"><summary style="cursor:pointer">Token 端點／金鑰（金鑰只存在本分頁）</summary>
-        <input id="tdxTokenUrl" type="text" placeholder="取得 token 的網址（POST）" style="font-size:12px;margin-top:4px">
-        <input id="tdxKey" type="password" placeholder="Bearer 金鑰" autocomplete="off" style="font-size:12px;margin-top:4px">
-        <input id="tdxTs" type="text" placeholder="X-Timestamp（留空＝使用目前時間）" style="font-size:12px;margin-top:4px">
-        <input id="tdxProxy" type="text" placeholder="Proxy 網址（選填，例 http://localhost:8787；填了就不需要上面的金鑰）" style="font-size:12px;margin-top:4px">
-        <button id="tdxTest" type="button" style="background:#0f766e;margin-top:6px;font-size:12px;padding:6px;">TDX 連線測試</button>
-        <div id="tdxTestBox" style="font-size:12px;margin-top:4px;line-height:1.6"></div></details></div>
+      <div class="hint" style="line-height:1.6">資料來源：道路與店家 © OpenStreetMap contributors（ODbL）；大眾運輸、即時路況、停車、充電樁：交通部 TDX 運輸資料流通服務（依 TDX 授權條款使用）。路況與時間為推估，請以現場標誌與實際狀況為準。</div>
     </details>
   </div>
 </div>
@@ -154,7 +79,7 @@
   <div id="osmAttr" hidden>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
   <div id="placeholder">
     <div class="icon">🗺️</div>
-    <div>請先載入路網 JSON，再選擇起點與終點</div>
+    <div>連線到台灣通伺服器中…</div>
     <div style="font-size:12px;opacity:.6">路線將繪製於此處</div>
   </div>
 </div>
@@ -181,12 +106,6 @@
     <div class="note" id="navNote">時間為系統推估</div>
     <div class="btns"><button id="navMore" type="button" aria-expanded="false" aria-label="更多：暫停、重複、語音">⋯ 更多</button><button id="navPause" type="button">⏸ 暫停</button><button id="navRepeat" type="button">🔁 重複</button><button id="navVoiceBtn" type="button">🔊 語音</button><button id="navEnd" type="button" class="danger">結束</button></div>
   </div>
-</div>
-
-<div id="loader">
-  <div class="spinner"></div>
-  <div id="loaderText">載入中...</div>
-  <div class="progress" id="loaderProgress"></div>
 </div>
 
 <script type="module" src="js/main.js"></script>

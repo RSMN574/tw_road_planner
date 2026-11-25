@@ -78,11 +78,20 @@ function shCards() {
       <span class="ds-route-tag ${i === 0 ? 'rec' : ''}">${i === 0 ? '推薦' : '備選'}・${esc(it.label)}</span>
       <span class="ds-route-time">${shMin(it.min)}</span>
       <span class="ds-route-sub">${km.toFixed(km < 10 ? 1 : 0)} 公里・${shClock(now + it.min * 60e3)} 到達</span>
-      <span class="ds-traffic none" title="沒有即時路況資料"><i style="width:100%"></i></span><span class="ds-traffic-lbl">無即時路況資料</span>
+      ${shTrafficBar(o)}
       <span class="ds-route-meta">${o.signals != null ? `<span title="紅綠燈">${icon('light', 16)}${o.signals}</span>` : ''}${toll ? `<span title="行經國道（收費，費率未計）">${icon('toll', 16)}國道 ${toll.toFixed(0)} km</span>` : ''}${ev ? `<span class="ds-chip warn" title="路線經過的道路事件（TDX）">${icon('event', 14)}事件 ${ev}</span>` : ''}</span>
     </button>`;
   }).join('') + '</div>';
   const a = box.querySelector('.ds-route.sel'); if (a && a.scrollIntoView && !shWide()) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+// 路況條（v1.15）：路線經過的路段狀態比例（順暢／車多／壅塞／封閉）；沒有資料的部分灰色。沒有即時路況時照實寫「無即時路況資料」
+function shTrafficBar(o) {
+  const f = o && o.flow, D = Math.max(1, o && o.distanceM || 0);
+  if (!f || !f.knownM) return '<span class="ds-traffic none" title="這條路線沒有即時路況資料"><i style="width:100%"></i></span><span class="ds-traffic-lbl">無即時路況資料</span>';
+  const pc = m => (m / D * 100).toFixed(1) + '%', seg = (m, c) => (m > 0 ? `<i class="${c}" style="width:${pc(m)}"></i>` : '');
+  const km = m => (m >= 1000 ? (m / 1000).toFixed(1) + ' 公里' : Math.round(m) + ' 公尺'), lbl = f.closedM ? `含封閉路段 ${km(f.closedM)}` : f.jamM > 100 ? `壅塞 ${km(f.jamM)}${f.slowM > 100 ? '・車多 ' + km(f.slowM) : ''}` : f.slowM > 100 ? `車多 ${km(f.slowM)}` : '路況順暢';
+  return `<span class="ds-traffic" title="即時路況涵蓋這條路線的 ${Math.round(f.knownM / D * 100)}%">${seg(f.freeM, 'free')}${seg(f.slowM, 'slow')}${seg(f.jamM, 'jam')}${seg(f.closedM, 'closed')}</span><span class="ds-traffic-lbl">${lbl}・涵蓋 ${Math.round(f.knownM / D * 100)}%</span>`;
 }
 
 // 路線規劃完成後，把路線移到看得到的區域：手機在面板上方（面板半展開約蓋住下半部）、平板桌機在左側卡片右邊
@@ -187,7 +196,7 @@ export function init() {
     for (const id of ['mapPitch', 'mapNorth']) shMove(shId(id), gTop);
     for (const id of ['mapZoomIn', 'mapZoom', 'mapZoomOut']) shMove(shId(id), gBot);
     lay.innerHTML = `<div class="ds-sec">地圖</div><label class="ds-toggle"><input type="checkbox" id="dsEvChk"> 道路事件（TDX 施工、事故、管制）</label><label class="ds-toggle"><input type="checkbox" id="dsInspect"> 點地圖查詢道路資訊</label><div class="ds-pop-row"></div>
-      <p class="ds-muted">即時壅塞（紅／黃／綠）目前沒有資料來源，不顯示。</p>`;
+      `;
     for (const id of ['mapRotL', 'mapRotR', 'mapFit']) shMove(shId(id), lay.querySelector('.ds-pop-row'));
     gTop.appendChild(lay); mc.appendChild(gTop); mc.appendChild(gBot);
     const zi = shId('mapZoomIn'), zo = shId('mapZoomOut'), nb = shId('mapNorth'); if (zi) zi.innerHTML = icon('plus'); if (zo) zo.innerHTML = icon('minus'); if (nb) nb.innerHTML = `<span>${icon('north')}</span>`;
@@ -225,10 +234,10 @@ export function init() {
   const goB = shId('go'); if (goB) goB.classList.add('ds-btn-2');
   // 其餘：收進「資料與進階設定」
   const more = shEl('details', { id: 'dsMore' }); more.innerHTML = '<summary>資料與進階設定</summary>'; body.appendChild(more);
-  for (const n of [...body.children]) if (n !== quick && n !== plan && n !== more && !['status', 'routes', 'busBox', 'ttBox', 'analysisBox', 'roadInfo', 'hlInfo', 'steps', 'stopBox'].includes(n.id)) more.appendChild(n);
+  for (const n of [...body.children]) if (n !== quick && n !== plan && n !== more && !['status', 'routes', 'analysisBox', 'roadInfo', 'steps'].includes(n.id)) more.appendChild(n);
   shMove(shId('status'), plan, shId('dsRoutes'));
   const detail = shEl('details', { id: 'dsDetail' }); detail.innerHTML = '<summary>路線詳細（逐步指示、分析）</summary>'; body.insertBefore(detail, more);
-  for (const id of ['routes', 'busBox', 'ttBox', 'analysisBox', 'roadInfo', 'hlInfo', 'steps', 'stopBox']) shMove(shId(id), detail);
+  for (const id of ['routes', 'analysisBox', 'roadInfo', 'steps']) shMove(shId(id), detail);
 
   // 事件
   quick.addEventListener('click', e => { const b = e.target.closest && e.target.closest('button'); if (!b) return; if (b.dataset.fav) { const f = shFav()[b.dataset.fav]; if (f) shGoTo(f); else { sheetTo('half'); to && to.focus(); } } if (b.dataset.rec != null) shGoTo(shRecent()[+b.dataset.rec]); });

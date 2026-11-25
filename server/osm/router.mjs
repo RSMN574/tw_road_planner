@@ -543,7 +543,7 @@ export class OsmRouter {
     const segs = arcs.map(x => typeof x === 'number' ? { a: x, p0: 0, p1: 1 } : x);
     const P = P0 || this.profile(key), { E, W } = this.g, coords = [], ways = [], steps = [], ferries = [], evHit = new Map();
     const warn = { unknownM: 0, limitedM: 0, conditionalM: 0, defaultAllowedM: 0, unknownSpeedM: 0, ferryM: 0, pierLinkM: 0 };
-    const segS = [], segCls = [], segKnown = [], segWay = [], delays = [];
+    const segS = [], segCls = [], segKnown = [], segWay = [], segArc = [], delays = [];   // segArc：每一小段屬於 segs 的第幾段（v1.15 路況：對應到有向邊）
     let dist = 0, drive = 0, delay = startPenS, sinceStep = 0, signals = 0, lastSig = -1e9;   // signals：經過的號誌路口；OSM 常在分隔道路的每個方向各標一個號誌點 → 40 m 內只算一次
     const sigAt = m => { if (m - lastSig > 40) signals++; lastSig = m; };
     if (startPenS > 0) delays.push([0, +startPenS.toFixed(1)]);
@@ -581,7 +581,7 @@ export class OsmRouter {
       for (const q of add) { const l = base ? hav(base[0], base[1], q[0], q[1]) : 0; pl.push(l); gl += l; base = q; }
       for (let j = 0; j < add.length; j++) {
         const had = coords.length; coords.push(add[j]); if (!had) continue;
-        segS.push(gl > 0 ? t * pl[j] / gl : 0); segCls.push(fer ? 7 : this.wcls[w]); segKnown.push(fer || lim.src ? 1 : 0); segWay.push(wi);
+        segS.push(gl > 0 ? t * pl[j] / gl : 0); segCls.push(fer ? 7 : this.wcls[w]); segKnown.push(fer || lim.src ? 1 : 0); segWay.push(wi); segArc.push(i);
       }
       if (!(gl > 0) && t > 0.05) delays.push([Math.max(0, coords.length - 1), +t.toFixed(1)]);   // 長度 0 的段：時間記在這一點
     }
@@ -590,7 +590,7 @@ export class OsmRouter {
     const roads = []; for (const w of ways) { const n = w.name || w.ref; if (n && roads[roads.length - 1] !== n) roads.push(n); }
     return { profile: key, distanceM: Math.round(dist), durationS: Math.round(drive + delay), driveS: Math.round(drive), delayS: Math.round(delay), arcs: segs.map(x => x.a), coords,
       ways: ways.map(w => ({ ...w, m: Math.round(w.m) })), roads, steps,
-      timing: { segS: segS.map(x => +x.toFixed(2)), segCls, segKnown, segWay, delays },
+      timing: { segS: segS.map(x => +x.toFixed(2)), segCls, segKnown, segWay, delays }, segArc,
       ferries: ferries.map(f => ({ name: f.name, fromStartM: f.fromStartM, m: Math.round(f.m), durationS: Math.round(f.t), source: f.source, note: '不含候船與班次時間，請查詢航運公司班表' })),
       signals, warnings: warn, conditionalRestrictionsIgnored: P.condSkipped, conditionalRestrictions: P.condAt || null,
       events: [...evHit].map(([id, h]) => ({ id, m: Math.round(h.m), extraS: Math.round(h.extraS) })) };

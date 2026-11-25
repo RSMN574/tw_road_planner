@@ -1,5 +1,5 @@
 // 真實瀏覽器（Chromium + Playwright）：網頁使用伺服器的全台 OSM 道路圖——底圖圖磚、規劃、步驟與分析、路名搜尋、點地圖選點、道路資訊、
-// GPS 導航（ETA 用伺服器的分段時間）、偏航後由伺服器重新規劃、渡輪、關閉 OSM。沒有本機路網（data/graph）也能用。
+// GPS 導航（ETA 用伺服器的分段時間）、偏航後由伺服器重新規劃、渡輪。v1.18：OSM 是唯一的路網（舊的本機路網與「關閉 OSM」開關已移除）。
 // 需要 Playwright（不在 npm test 內）：NODE_PATH=$(npm root -g) node test/browser-osm.cjs
 // 用真實的全台圖：OSM_GRAPH_DIR=/path/to/data/osm/graph node test/browser-osm.cjs real（只跑台北的規劃與截圖）
 // 注意：這裡的 GPS 序列只存在於測試；產品本身不含任何模擬定位。
@@ -25,7 +25,7 @@ const distToPoly = (p, P) => { let m = Infinity; for (let i = 0; i < P.length - 
   const server = http.createServer(app); await new Promise(r => server.listen(0, '127.0.0.1', r)); const URL_ = `http://localhost:${server.address().port}/`;
   const browser = await chromium.launch(), reqs = [];
   const mk = async (opts = {}) => { const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['geolocation'], geolocation: { latitude: LAT0, longitude: LON0, accuracy: 10 }, ...opts }); await ctx.addInitScript(SPY); const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push(m.text()); }); page.on('request', r => { if (/api\/v1\/osm\//.test(r.url())) reqs.push(r.url()); }); return { ctx, page, errs }; };
-  const ready = page => page.waitForFunction(() => document.getElementById('osmRow') && !document.getElementById('osmRow').hidden && /OSM/.test(document.getElementById('stats').textContent), null, { timeout: 20000 });
+  const ready = page => page.waitForFunction(() => /OSM/.test(document.getElementById('stats').textContent), null, { timeout: 20000 });
   const setPt = async (page, id, [la, lo]) => { await page.fill('#' + id, `${la},${lo}`); await page.press('#' + id, 'Enter'); };
   const plan = async (page, from, to, mode = 'car') => { await page.selectOption('#mode', mode); await setPt(page, 'from', from); await setPt(page, 'to', to); await page.click('#go'); await page.waitForFunction(() => /找到|❌/.test(document.getElementById('status').textContent), null, { timeout: 30000 }); };
   const tilesDrawn = page => page.evaluate(() => { const g = document.querySelector('#osmBase'); return g ? g.querySelectorAll('path').length : 0; });
@@ -44,10 +44,10 @@ const distToPoly = (p, P) => { let m = Infinity; for (let i = 0; i < P.length - 
     ok('沒有 JS 錯誤', errs.length === 0, errs.join(' | ')); await ctx.close(); await browser.close(); server.close(); process.exit(fails ? 1 : 0);
   }
 
-  console.log('① 沒有本機路網：自動使用伺服器的 OSM 道路圖，畫出底圖');
+  console.log('① 自動使用伺服器的 OSM 道路圖，畫出底圖');
   { const { ctx, page, errs } = await mk(); await page.goto(URL_); await ready(page);
-    const s = await page.evaluate(() => ({ row: !document.getElementById('osmRow').hidden, on: document.getElementById('osmOn').checked, attr: !document.getElementById('osmAttr').hidden, stats: document.getElementById('stats').textContent, status: document.getElementById('status').textContent, ph: document.getElementById('placeholder').classList.contains('hidden') }));
-    ok('顯示「使用全台 OSM 道路圖」開關（預設開）、OSM 版權標示、沒有「載入失敗」的錯誤', s.row && s.on && s.attr && !/自動載入失敗/.test(s.status) && /OSM/.test(s.status) && s.ph, JSON.stringify(s));
+    const s = await page.evaluate(() => ({ noSwitch: !document.getElementById('osmOn'), attr: !document.getElementById('osmAttr').hidden, stats: document.getElementById('stats').textContent, status: document.getElementById('status').textContent, ph: document.getElementById('placeholder').classList.contains('hidden') }));
+    ok('沒有「關閉 OSM」開關、顯示 OSM 版權標示、沒有「載入失敗」的錯誤', s.noSwitch && s.attr && !/自動載入失敗/.test(s.status) && /OSM/.test(s.status) && s.ph, JSON.stringify(s));
     await page.mouse.move(640, 400); for (let i = 0; i < 9; i++) { await page.mouse.wheel(0, -500); await wait(60); }
     // 放大到測試資料（台中附近一小塊）：把畫面中心移過去
     await setPt(page, 'from', at(0, 0)); await setPt(page, 'to', at(4, 4)); await page.click('#go'); await page.waitForSelector('#routes .rt', { timeout: 20000 }); await wait(1200);
@@ -103,12 +103,11 @@ const distToPoly = (p, P) => { let m = Infinity; for (let i = 0; i < P.length - 
     await page.click('#navEnd');
     ok('沒有 JS 錯誤', errs.length === 0, errs.join(' | ')); await ctx.close(); }
 
-  console.log('④ 關閉 OSM');
-  { const { ctx, page, errs } = await mk(); await page.goto(URL_); await ready(page); await page.uncheck('#osmOn'); await wait(300);
-    const s = await page.evaluate(() => ({ hint: document.getElementById('osmHint').textContent, attr: document.getElementById('osmAttr').hidden, stored: localStorage.getItem('osm.on') }));
-    ok('關閉後：提示改用本機路網、隱藏 OSM 標示、記住選擇', /本機/.test(s.hint) && s.attr && s.stored === '0', JSON.stringify(s));
-    await page.reload(); await page.waitForFunction(() => document.getElementById('osmRow') && !document.getElementById('osmRow').hidden, null, { timeout: 15000 }); ok('重新整理後仍是關閉', await page.evaluate(() => !document.getElementById('osmOn').checked));
-    await page.check('#osmOn'); ok('沒有 JS 錯誤', errs.length === 0, errs.join(' | ')); await ctx.close(); }
+  console.log('④ 舊版的「關閉 OSM」設定（localStorage osm.on=0）不再有作用');
+  { const { ctx, page, errs } = await mk(); await page.goto(URL_); await page.evaluate(() => localStorage.setItem('osm.on', '0')); await page.reload(); await ready(page);
+    const s = await page.evaluate(() => ({ attr: document.getElementById('osmAttr').hidden, body: document.body.classList.contains('osm-map') }));
+    ok('仍使用 OSM（顯示版權標示、OSM 底圖配色）', !s.attr && s.body, JSON.stringify(s));
+    ok('沒有 JS 錯誤', errs.length === 0, errs.join(' | ')); await ctx.close(); }
 
   await browser.close(); server.close(); console.log(fails ? `\n❌ ${fails} 項失敗` : '\n✅ 全部通過'); process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

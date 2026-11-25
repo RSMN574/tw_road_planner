@@ -1,6 +1,7 @@
-// static.mjs — 靜態檔：網頁（dist/）與路網資料（data/）
-// ・只開放白名單路徑（不會把伺服器程式、.env、package.json 送出去）
-// ・ETag + If-None-Match → 304；小檔在記憶體預先壓縮（br/gzip），大檔（路網 JSON）壓縮一次存到磁碟快取，之後直接串流
+// static.mjs — 靜態檔：網頁（dist/）
+// ・只開放白名單路徑（不會把伺服器程式、.env、package.json、data/ 送出去）
+// ・v1.18：不再提供 data/（以前是給瀏覽器下載舊的本機路網；全台 OSM 圖檔不公開下載）
+// ・ETag + If-None-Match → 304；小檔在記憶體預先壓縮（br/gzip），大檔壓縮一次存到磁碟快取，之後直接串流
 import { createReadStream, createWriteStream, existsSync, mkdirSync, promises as fsp, renameSync, statSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import zlib from 'node:zlib';
@@ -12,9 +13,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.svg', '.txt', '.bin']);
 const MEM_LIMIT = 8 * 1024 * 1024;            // 8 MB 以下：記憶體壓縮快取；以上：磁碟 gzip 快取
 const WEB_OK = /^(index\.html|sw\.js|manifest\.webmanifest|(css|js|icons)\/[\w.\-\/]+)$/;   // 網頁白名單
-const DATA_OK = /^[\w.\-\/]+\.(json|bin)$/;                                           // data/ 只開放 .json 與路網封包 .bin
-
-export function createStatic({ staticDir, dataDir, cacheDir, memLimit = MEM_LIMIT }) {
+export function createStatic({ staticDir, cacheDir, memLimit = MEM_LIMIT }) {
   const mem = new Map(), disk = new Map(), building = new Map();
   mkdirSync(cacheDir, { recursive: true });
 
@@ -24,14 +23,11 @@ export function createStatic({ staticDir, dataDir, cacheDir, memLimit = MEM_LIMI
     p = path.posix.normalize(p).replace(/^\/+/, '');
     if (p === '' ) p = 'index.html';
     if (p.split('/').some(s => s === '..' || s.startsWith('.'))) return null;          // 擋 ../ 與隱藏檔
-    let base, rel;
-    if (p.startsWith('data/')) { rel = p.slice(5); if (!DATA_OK.test(rel)) return null; base = dataDir; }
-    else { rel = p; if (!WEB_OK.test(rel)) return null; base = staticDir; }
-    const full = path.resolve(base, rel); if (!full.startsWith(path.resolve(base) + path.sep)) return null;
-    return { full, rel: p, kind: p.startsWith('data/') ? 'data' : 'web' };
+    if (!WEB_OK.test(p)) return null;
+    const full = path.resolve(staticDir, p); if (!full.startsWith(path.resolve(staticDir) + path.sep)) return null;
+    return { full, rel: p, kind: 'web' };
   }
   function cacheControl(f) {
-    if (f.kind === 'data') return 'no-cache';                                          // 路網可能更新：每次用 ETag 確認（沒變就 304）
     if (/^(index\.html|sw\.js|manifest\.webmanifest)$/.test(f.rel)) return 'no-cache';   // 入口與 Service Worker 不能被長期快取
     if (f.rel.startsWith('icons/')) return 'public, max-age=604800';
     return 'public, max-age=3600';

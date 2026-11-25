@@ -12,16 +12,6 @@ export function fitBase(minX, maxX, minY, maxY, padding = 60) {
   State.base = { minX, minY, kx, scale, offX: (w - spanX*scale)/2, offY: (h - spanY*scale)/2, h };
 }
 
-export function fitGraph() {
-  let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
-  for (let i = 0; i < State.N; i++) {
-    const x = State.nodeXY[i*5+2], y = State.nodeXY[i*5+3];
-    if (!isFinite(x) || !isFinite(y) || (x === 0 && y === 0)) continue;
-    if (x < a) a = x; if (x > b) b = x; if (y < c) c = y; if (y > d) d = y;
-  }
-  if (a <= b) fitBase(a, b, c, d);
-}
-
 export function worldToScreen(x, y) {
   const bx = State.base.offX + (x - State.base.minX) * State.base.kx * State.base.scale;
   const by = State.base.h - State.base.offY - (y - State.base.minY) * State.base.scale;
@@ -62,7 +52,7 @@ export function renderView() { if (State.renderFull || !shiftScene()) { State.re
 export function render() {                       // 只重繪，不重跑 dijkstra
   if (!State.base) { drawGrid(); return; }
   if (State.currentRoute) Hooks.drawRoute(State.currentRoute, false);
-  else { drawGrid(); Hooks.drawWidthLayer(); Hooks.drawBus(); Hooks.drawUbike(); drawMarkers(); Hooks.drawInspect(); if (Hooks.drawTransitPlan) Hooks.drawTransitPlan(); if (Hooks.drawNav) Hooks.drawNav(); }
+  else { drawGrid(); drawMarkers(); if (Hooks.drawTransitPlan) Hooks.drawTransitPlan(); if (Hooks.drawNav) Hooks.drawNav(); }
   if (Hooks.drawExtra) Hooks.drawExtra();                       // v1.12：道路事件圖層等（ui-shell.js）
   commitScene();
   if (Hooks.syncMapUi) Hooks.syncMapUi();                       // 縮放層級、比例尺（map-view.js）

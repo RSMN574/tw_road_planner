@@ -32,7 +32,7 @@ export const State = {
   edgeIdToRoadNames: new Map(),
   gridIndex: null,
   GRID: 0.005,
-  coordType: 'unknown',
+  coordType: 'wgs84',          // v1.18：世界座標＝經緯度（只有全台 OSM 道路圖）
   view: { tx: 0, ty: 0, scale: 1 },
   base: null,
   currentRoute: null,

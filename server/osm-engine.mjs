@@ -1,7 +1,7 @@
 // osm-engine.mjs — 伺服器端的全台 OSM 道路圖：路線、地圖圖磚、最近道路、路名搜尋
 // 圖檔由 tools/osm/osm-build.mjs 產生（data/osm/graph/current.json 指向最新的一份）；沒有圖檔時這些 API 回 503，其他功能照常。
-// 跟 engine.mjs（台中路網）一樣在背景執行緒（worker_threads）或主執行緒執行；每個執行緒各載入一份（全台約 300 MB＋各運具用到時才建的表）
-import { existsSync, readFileSync, statSync } from 'node:fs';
+// 在背景執行緒（worker_threads）或主執行緒執行；每個執行緒各載入一份（全台約 300 MB＋各運具用到時才建的表）
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readGraph } from './osm/graph-file.mjs';
 import { OsmRouter } from './osm/router.mjs';
@@ -12,8 +12,11 @@ import { ApiError } from './http-util.mjs';
 import { readBuildings, buildingTile, SRC as BLD_SRC } from './osm/buildings.mjs';
 import { loadPois, searchPois, nearbyPois, poiDetail, findPoi } from './osm/poi.mjs';
 import { CATEGORIES as POI_CATS } from './osm/poi-categories.mjs';
+import { readPlacesStatic, STATIC_FILE as PLACES_FILE } from './places/tdx-places.mjs';
 import { transitConfigure, transitPlan, transitStatus, transitPrepare } from './transit-engine.mjs';
 import { mapEvents, overlayAt, eventActive } from './traffic/events.mjs';
+import { buildSections, matchSections, levelTables, liveBySection, flowOverlay, mergeOverlays, routeFlow, simplify as flowSimplify, LV, LV_LABEL } from './traffic/flow.mjs';
+import { readGz, STATIC_FILE, LIVE_FILE } from './traffic/flow-sync.mjs';
 
 // ---------- 道路事件（v1.11；tools/traffic-sync.mjs 寫到 CACHE_DIR/traffic/events.json）----------
 let traffic = { events: [], fetchedAt: null, sig: '', injected: false }, ovCache = { key: '', v: null };
@@ -30,6 +33,59 @@ function trafficOverlay(at) {
   const mk = T.sig + '|' + info.version; if (!ovCache.mapped || ovCache.mk !== mk) ovCache = { mk, mapped: mapEvents(T.events, R), key: '', v: null };   // 事件位置：資料變了才重算
   const key = Math.floor(at / 60e3); if (ovCache.key === key) return ovCache.v;
   const b = overlayAt(ovCache.mapped, at); ovCache.key = key; ovCache.v = { ...b, fetchedAt: T.fetchedAt, total: T.events.length, source: T.source }; return ovCache.v;
+}
+// ---------- 即時路況（v1.15；traffic/flow.mjs）----------
+// 靜態路段（路段、線形、壅塞水準表）→ 對應到有向邊（約 20 秒；結果存在 CACHE_DIR/traffic/flow-match.json，路網或路段資料變了才重算）
+// 即時檔（伺服器每 5 分鐘更新）→ 每個路段的狀態 → 各運具的路網加權（汽車、大型車、機車；步行與自行車不套用）
+const FLOW_EMPTY = () => ({ ssig: '', lsig: '', sections: null, states: new Map(), ov: new Map(), fetchedAt: null });
+let FL = FLOW_EMPTY();
+const FLOW_MODES = new Set(['car', 'heavy', 'moto']), FLOW_WINDOW_MS = 30 * 60e3, FLOW_MAX_AGE_MS = 20 * 60e3;
+function loadFlow() {
+  if (!R || !cfgRef) return FL;
+  const dir = path.join(cfgRef.cacheDir || '.cache', 'traffic'), fS = path.join(dir, STATIC_FILE), fL = path.join(dir, LIVE_FILE);
+  if (!existsSync(fS)) { if (FL.sections) FL = FLOW_EMPTY(); return FL; }
+  const st = statSync(fS), ss = st.mtimeMs + ':' + st.size + ':' + info.version;
+  if (ss !== FL.ssig) {
+    const S = readGz(fS), by = S.byAuthority || {}, sections = buildSections(by), tables = levelTables(Object.fromEntries(Object.entries(by).map(([a, d]) => [a, d.levels])));
+    const fM = path.join(dir, 'flow-match.json'); let match = null;
+    try { const c = JSON.parse(readFileSync(fM, 'utf8')); if (c.key === ss) match = { arcSec: new Map(c.arcs.map((a, i) => [a, c.secs[i]])), stats: c.stats }; } catch { /* 沒有快取 */ }
+    if (!match) { match = matchSections(sections, R); try { writeFileSync(fM + '.tmp', JSON.stringify({ key: ss, arcs: [...match.arcSec.keys()], secs: [...match.arcSec.values()], stats: match.stats })); renameSync(fM + '.tmp', fM); } catch { /* 唯讀：下次再算 */ } }
+    const { V, E } = R.g, secArcs = sections.map(() => []), box = new Float64Array(sections.length * 4).fill(NaN);
+    for (const [a, si] of match.arcSec) { secArcs[si].push(a); for (const v of [E.u[a >> 1], E.v[a >> 1]]) { const lo = V.lon[v] / 1e7, la = V.lat[v] / 1e7, b = si * 4; if (!(box[b] <= lo)) box[b] = lo; if (!(box[b + 2] >= lo)) box[b + 2] = lo; if (!(box[b + 1] <= la)) box[b + 1] = la; if (!(box[b + 3] >= la)) box[b + 3] = la; } }
+    FL = { ...FLOW_EMPTY(), ssig: ss, sections, tables, match, secArcs, box, staticAt: S.fetchedAt || null, authorities: Object.keys(by) };
+  }
+  if (existsSync(fL)) { const s2 = statSync(fL), ls = s2.mtimeMs + ':' + s2.size; if (ls !== FL.lsig) { try { const L = readGz(fL); FL.states = liveBySection(L, FL.tables, FL.sections); FL.fetchedAt = L.fetchedAt || null; FL.liveAuth = Object.entries(L.byAuthority || {}).map(([a, w]) => [a, (w.LiveTraffics || []).length]); FL.lsig = ls; FL.ov = new Map(); } catch { /* 寫到一半 */ } } }
+  return FL;
+}
+// 這次規劃要用的即時路況加權（只用在出發時間 30 分鐘內、資料 20 分鐘內的路段）
+function flowFor(key, at) {
+  const F = loadFlow(); if (!F.sections || !F.states.size || !FLOW_MODES.has(key) || Math.abs(at - Date.now()) > FLOW_WINDOW_MS) return null;
+  const k = key + '|' + Math.floor(Date.now() / 60e3); let o = F.ov.get(k);
+  if (!o) { F.ov = new Map(); o = flowOverlay(F.match, F.sections, F.states, R.profile(key), R, { maxAgeMs: FLOW_MAX_AGE_MS }); F.ov.set(k, o); }
+  return o;
+}
+// 路線經過的路況：每一小段的狀態＋各狀態的長度
+function flowOfRoute(r) {
+  const F = FL; if (!F.sections || !F.states.size || !r.segArc) return undefined;
+  const c = r.coords, len = []; for (let i = 0; i + 1 < c.length; i++) { const R0 = Math.PI / 180, a = c[i], b = c[i + 1], h = Math.sin((b[1] - a[1]) * R0 / 2) ** 2 + Math.cos(a[1] * R0) * Math.cos(b[1] * R0) * Math.sin((b[0] - a[0]) * R0 / 2) ** 2; len.push(12742000 * Math.asin(Math.sqrt(h))); }
+  return routeFlow(r.arcs, r.segArc, len, F.match, F.sections, F.states);
+}
+export function osmTrafficFlow(q = {}) {
+  need(); const F = loadFlow(), base = { available: !!(F.sections && F.states.size), fetchedAt: F.fetchedAt ? new Date(F.fetchedAt).toISOString() : null, staticAt: F.staticAt ? new Date(F.staticAt).toISOString() : null, source: 'TDX 路況資訊 v2', levels: LV_LABEL };
+  if (!F.sections) return { ...base, sections: [], note: '沒有即時路況資料：執行 npm run traffic:flow，或在 .env 設 TDX 金鑰讓伺服器自動更新（TRAFFIC_POLL_MIN）' };
+  if (!q.bbox) return { ...base, sectionsTotal: F.sections.length, matchedArcs: F.match.arcSec.size, match: F.match.stats, live: F.liveAuth || [], counts: (() => { const c = {}; for (const x of F.states.values()) c[LV_LABEL[x.lv]] = (c[LV_LABEL[x.lv]] || 0) + 1; return c; })() };
+  const bb = String(q.bbox).split(',').map(Number); if (bb.length !== 4 || bb.some(x => !Number.isFinite(x))) throw new ApiError(400, 'BAD_PARAM', 'bbox 需要「西,南,東,北」');
+  const wide = bb[2] - bb[0] > 0.6, tol = (bb[2] - bb[0]) / 1500, out = [], now = Date.now();
+  for (let si = 0; si < F.sections.length && out.length < 4000; si++) {
+    const b = si * 4; if (!(F.box[b] <= bb[2] && F.box[b + 2] >= bb[0] && F.box[b + 1] <= bb[3] && F.box[b + 3] >= bb[1])) continue;
+    const sec = F.sections[si], st = F.states.get(sec.key); if (!st || st.lv === LV.UNKNOWN || (st.at && now - st.at > FLOW_MAX_AGE_MS)) continue;
+    if (wide && !(sec.cls === 0 || sec.cls === 1)) continue;                                       // 縮很小時只畫國道、快速道路
+    const lines = []; let cur = null;
+    for (const a of F.secArcs[si]) { const e = a >> 1, L = R.g.E.len[e], p = a & 1 ? R.cut(e, 0, L).reverse() : R.cut(e, 0, L);
+      if (cur && Math.abs(cur[cur.length - 1][0] - p[0][0]) < 1e-7 && Math.abs(cur[cur.length - 1][1] - p[0][1]) < 1e-7) cur.push(...p.slice(1)); else { cur = p.slice(); lines.push(cur); } }
+    out.push({ k: sec.key, n: sec.name, lv: st.lv, v: st.v, g: lines.map(l => flowSimplify(l, tol).map(([lo, la]) => [+lo.toFixed(5), +la.toFixed(5)])) });
+  }
+  return { ...base, sections: out, truncated: out.length >= 4000 };
 }
 export function osmTrafficEvents(q = {}) {
   need(); const T = loadTraffic(), at = departMs(q.at), o = trafficOverlay(at), hit = new Map((o ? o.hits : []).map(h => [h.eventId, h]));
@@ -72,7 +128,8 @@ export function loadOsm(cfg) {
   info = { loaded: true, dir: path.relative(cfg.dataDir, path.dirname(f.graph)).split(path.sep).join('/'), vertices: G.V.n, edges: G.E.n, ways: G.W.n, dataTimestamp: f.current.dataTimestamp || G.header?.replication?.timestamp || null,
     builtAt: f.current.builtAt || man.builtAt || null, source: man.source || null, sourceMd5: man.sourceMd5 || null, sourceMd5Verified: !!man.sourceMd5Verified, alt: altInfo, modes: Object.keys(MODES).filter(m => m !== 'foot'), loadMs: Date.now() - t0,
     version: `${f.current.dir}|${f.current.builtAt || ''}`,
-    poi: pFile ? { available: true, version: String(Math.round(statSync(pFile).mtimeMs)) } : { available: false, reason: '沒有 osm-poi.json.gz；用 npm run osm:poi 建立' },
+    flow: (() => { const F = FL; return F.sections ? { available: F.states.size > 0, sections: F.sections.length, fetchedAt: F.fetchedAt ? new Date(F.fetchedAt).toISOString() : null } : { available: false }; })(),
+    poi: pFile ? { available: true, version: String(Math.round(statSync(pFile).mtimeMs)) + (plSig ? '+' + plSig : ''), tdxPlaces: P && P.D.placesStats ? P.D.placesStats : null } : { available: false, reason: '沒有 osm-poi.json.gz；用 npm run osm:poi 建立' },
     buildings: bFile ? { available: true, count: bRep ? bRep.count : null, heightSourcePct: bRep ? bRep.heightSourcePct : null, version: String(Math.round(statSync(bFile).mtimeMs)), minZoom512: 15 } : { available: false, reason: '沒有 osm-buildings.twbld；用 npm run osm:buildings 建立' } };
   return info;
 }
@@ -85,7 +142,8 @@ export function osmWarmup(modes = []) {
   if (modes.length) { R.edgeIndex(); R.turnGeo(); }
   try { const t = Date.now(), ok = transitPrepare(R); if (ok) console.log(`   大眾運輸轉乘預先建立：${Date.now() - t} ms`); } catch (e) { /* 沒有大眾運輸資料：第一次查詢時回 503 */ }
   try { loadTraffic(); trafficOverlay(Date.now()); } catch { /* 沒有道路事件 */ }
-  try { if (pFile && !P) { const t = Date.now(); P = loadPois(pFile); console.log(`   店家地點索引：${P.n} 筆，${Date.now() - t} ms`); } } catch (e) { console.warn('   店家地點載入失敗：' + e.message); }
+  try { const t = Date.now(), F = loadFlow(); if (F.sections) console.log(`   即時路況：${F.sections.length} 個路段、對應 ${F.match.arcSec.size} 段有向邊，${Date.now() - t} ms`); } catch (e) { console.warn('   即時路況載入失敗：' + e.message); }
+  try { if (pFile && !P) { const t = Date.now(); needPoi(); console.log(`   店家地點索引：${P.n} 筆${P.D.placesStats ? `（含 TDX 停車場 ${P.D.placesStats.tdxParking}、充電站 ${P.D.placesStats.tdxCharging}）` : ''}，${Date.now() - t} ms`); } } catch (e) { console.warn('   店家地點載入失敗：' + e.message); }
   return Date.now() - t0;
 }
 const need = () => { if (!R) throw new ApiError(503, 'OSM_NOT_LOADED', info.reason || '伺服器沒有載入 OSM 道路圖'); };
@@ -114,7 +172,8 @@ export function osmRoute(q) {
   if (!key) throw new ApiError(400, 'BAD_MODE', `mode 只能是 ${Object.keys(MODES).filter(m => m !== 'foot').join('、')}`);
   const from = latLon(q.from, 'from'), to = latLon(q.to, 'to'), via = parseVia(q.via), heading = q.heading === undefined || q.heading === '' ? null : num(q.heading, 'heading', -360, 720);
   const at = bool(q.conditional, true) ? departMs(q.depart) : null;   // conditional=0：不判斷時段（舊行為：有條件的限制一律不套用）
-  const tov = bool(q.events, true) ? trafficOverlay(at ?? departMs(q.depart)) : null, overlay = tov && tov.overlay.size ? tov.overlay : null;   // events=0：不考慮道路事件
+  const tov = bool(q.events, true) ? trafficOverlay(at ?? departMs(q.depart)) : null; let overlay = tov && tov.overlay.size ? tov.overlay : null;   // events=0：不考慮道路事件
+  const fl = bool(q.traffic, true) ? flowFor(key, at ?? departMs(q.depart)) : null; if (fl && fl.overlay.size) overlay = mergeOverlays(overlay, fl.overlay);   // traffic=0：不用即時路況
   // 最短距離：只在直線距離 ≤ 60 km 時另外算（長距離的「最短」幾乎都是繞山路、小路，時間多很多，又要多花 1 秒以上）；alternatives=all 一律算
   const pts = [from, ...via, to], crowKm = pts.slice(1).reduce((a, p, i) => a + Math.hypot((p[0] - pts[i][0]) * 110.6, (p[1] - pts[i][1]) * 111.3 * Math.cos(p[0] * Math.PI / 180)), 0), alt = String(q.alternatives ?? '1');
   const kinds = /^(all|2)$/i.test(alt) || (bool(alt, true) && crowKm <= SHORTEST_MAX_KM) ? ['fastest', 'shortest'] : ['fastest'], out = [];
@@ -125,12 +184,14 @@ export function osmRoute(q) {
     out.push({ key: kind, label: LABEL[kind], ok: true, distanceM: r.distanceM, durationS: r.durationS, driveS: r.driveS, delayS: r.delayS, estimate: ESTIMATE,
       geometry: r.coords.map(([lo, la]) => [r6(lo), r6(la)]), roads: r.roads, ways: r.ways.map(w => ({ name: w.name, ref: w.ref, highway: w.highway, m: w.m, limitKmh: w.limitKmh, limitSrc: w.limitSrc })),
       steps: bool(q.steps, true) ? r.steps.map(s => ({ ...s, at: s.at ? [r6(s.at[0]), r6(s.at[1])] : undefined })) : undefined,
-      timing: r.timing, legs: r.legs, signals: r.signals, ferries: r.ferries, warnings: r.warnings, snap: r.snap, conditionalRestrictionsIgnored: r.conditionalRestrictionsIgnored, conditionalRestrictions: r.conditionalRestrictions, events: r.events && r.events.length ? r.events : undefined, _arcs: r.arcs.join(',') });
+      timing: r.timing, legs: r.legs, flow: flowOfRoute(r), signals: r.signals, ferries: r.ferries, warnings: r.warnings, snap: r.snap, conditionalRestrictionsIgnored: r.conditionalRestrictionsIgnored, conditionalRestrictions: r.conditionalRestrictions, events: r.events && r.events.length ? r.events : undefined, _arcs: r.arcs.join(',') });
   }
   for (const o of out) delete o._arcs;
   const notes = []; if (kinds.length === 1 && bool(alt, true)) notes.push(`直線距離 ${Math.round(crowKm)} km：長距離只提供最快路線（最短距離路線通常繞山路、小路）`);
   if (tov && tov.hits.length) { const used = new Set(out.flatMap(o => (o.events || []).map(x => x.id))); notes.push(`道路事件：${tov.hits.length} 筆有效事件已對應到路網（封閉 ${tov.hits.filter(h => h.block).length} 筆避開、其餘加權）${used.size ? `；路線經過 ${used.size} 筆事件的路段` : ''}`); }
   if (at != null) notes.push(`轉向限制的時段條件依出發時間 ${new Date(at + 8 * 3600e3).toISOString().slice(0, 16).replace('T', ' ')}（台北）判斷`);
+  if (fl) notes.push(`即時路況：${fl.arcs.toLocaleString()} 段道路依 TDX 即時速度加權（${FL.fetchedAt ? new Date(FL.fetchedAt + 8 * 3600e3).toISOString().slice(11, 16) : '—'} 更新）`);
+  else if (FL.sections && FLOW_MODES.has(key) && FL.states.size && Math.abs((at ?? departMs(q.depart)) - Date.now()) > FLOW_WINDOW_MS) notes.push('即時路況只用在 30 分鐘內出發的路線');
   if (via.length) notes.push(`途經 ${via.length} 個地點：分段規劃後接起來（每段各自最快／最短；不含在途經點停留的時間）`);
   return { engine: 'osm', mode, via: via.length ? via.map(([la, lo]) => [r6(la), r6(lo)]) : undefined, traffic: tov ? { events: tov.total, mapped: tov.hits.length, blocked: tov.hits.filter(h => h.block).length, fetchedAt: tov.fetchedAt ? new Date(tov.fetchedAt).toISOString() : null, source: tov.source, reasons: Object.fromEntries(tov.hits.filter(h => out.some(o => (o.events || []).some(x => x.id === h.eventId))).map(h => [h.eventId, h.reason])) } : null, depart: at != null ? new Date(at).toISOString() : null, data: { dataTimestamp: info.dataTimestamp, builtAt: info.builtAt, source: 'OpenStreetMap（© OpenStreetMap contributors，ODbL）' }, routes: out, notes };
 }
@@ -155,14 +216,14 @@ function routeVia(pts, { profile, metric, heading, at, overlay }) {
   return mergeLegs(legs);
 }
 export function mergeLegs(legs) {
-  const coords = [], steps = [], ways = [], segS = [], segCls = [], segKnown = [], segWay = [], delays = [], ferries = [], ev = new Map(), out = [], warnings = {};
+  const coords = [], steps = [], ways = [], segS = [], segCls = [], segKnown = [], segWay = [], segArc = [], delays = [], ferries = [], ev = new Map(), out = [], warnings = {}; let arcOff = 0;
   let dist = 0, dur = 0, drive = 0, delay = 0, signals = 0;
   legs.forEach((r, k) => {
     const T = r.timing, same = coords.length && r.coords.length && Math.abs(coords[coords.length - 1][0] - r.coords[0][0]) < 1e-9 && Math.abs(coords[coords.length - 1][1] - r.coords[0][1]) < 1e-9;
     const off = coords.length ? (same ? coords.length - 1 : coords.length) : 0, wOff = ways.length;
-    if (coords.length && !same) { segS.push(0); segCls.push(T.segCls[0] ?? 0); segKnown.push(1); segWay.push(wOff); }   // 兩段吸附點不同：補一小段（時間 0）讓分段時間對得上座標
+    if (coords.length && !same) { segS.push(0); segCls.push(T.segCls[0] ?? 0); segKnown.push(1); segWay.push(wOff); segArc.push(-1); }   // 兩段吸附點不同：補一小段（時間 0）讓分段時間對得上座標
     coords.push(...(same ? r.coords.slice(1) : r.coords));
-    segS.push(...T.segS); segCls.push(...T.segCls); segKnown.push(...T.segKnown); segWay.push(...T.segWay.map(w => w + wOff));
+    segS.push(...T.segS); segCls.push(...T.segCls); segKnown.push(...T.segKnown); segWay.push(...T.segWay.map(w => w + wOff)); segArc.push(...(r.segArc || []).map(x => (x < 0 ? -1 : x + arcOff))); arcOff += r.arcs.length;
     for (const [i, d] of T.delays) delays.push([i + off, d]);
     ways.push(...r.ways);
     for (const s of r.steps) {
@@ -180,7 +241,7 @@ export function mergeLegs(legs) {
   const roads = []; for (const w of ways) { const n = w.name || w.ref; if (n && roads[roads.length - 1] !== n) roads.push(n); }
   const f = legs[0], l = legs[legs.length - 1];
   return { distanceM: dist, durationS: dur, driveS: drive, delayS: delay, arcs: legs.flatMap(r => r.arcs), coords, ways, roads, steps,
-    timing: { segS, segCls, segKnown, segWay, delays }, ferries, signals, warnings,
+    timing: { segS, segCls, segKnown, segWay, delays }, segArc, ferries, signals, warnings,
     conditionalRestrictionsIgnored: f.conditionalRestrictionsIgnored, conditionalRestrictions: f.conditionalRestrictions,
     events: [...ev.values()], legs: out, snap: { ...f.snap, to: l.snap.to, toM: l.snap.toM, via: out.slice(0, -1).map(x => x.snap.to) } };
 }
@@ -205,7 +266,14 @@ export function osmTransitPlan(q) {
 export const osmTransitStatus = () => transitStatus();
 
 // ---------- 店家地點（POI；osm/poi.mjs）----------
-const needPoi = () => { need(); if (!pFile) throw new ApiError(404, 'NO_POI', '伺服器沒有店家地點資料（npm run osm:poi）'); if (!P) P = loadPois(pFile); return P; };
+// v1.17：TDX 停車場與充電站（CACHE_DIR/places/places-static.json.gz）併入；檔案更新後下一次查詢重新建索引（約 2 秒）
+let plSig = '';
+const needPoi = () => {
+  need(); if (!pFile) throw new ApiError(404, 'NO_POI', '伺服器沒有店家地點資料（npm run osm:poi）');
+  const f = path.join(cfgRef.cacheDir || '.cache', 'places', PLACES_FILE), st = existsSync(f) ? statSync(f) : null, sg = st ? st.mtimeMs + ':' + st.size : '';
+  if (!P || sg !== plSig) { let places = null; if (sg) try { places = readPlacesStatic(f); } catch { /* 寫到一半：先不併 */ } P = loadPois(pFile, { places }); plSig = places ? sg : ''; }
+  return P;
+};
 // 沒有門牌的地點：補「附近道路」（最近的有名稱道路；只做前幾筆，標示是推出來的）
 function withRoad(list) { for (const r of list.slice(0, 20)) if (!r.address) { const c = R.snapCandidates(r.lat, r.lon, 'foot', { windowM: 40, maxM: 150 }).find(x => R.wayName(G.E.way[x.e])); if (c) r.nearRoad = R.wayName(G.E.way[c.e]); } return list; }
 const optNear = q => (q.near ? latLon(q.near, 'near') : null);

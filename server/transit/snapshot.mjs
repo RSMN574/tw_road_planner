@@ -26,9 +26,24 @@ export const OAS_METRO_ENUM = {
   StationTimeTable: ['TRTC', 'KRTC', 'TYMC', 'KLRT', 'NTDLRT', 'NTALRT', 'NTMC'], StationTransfer: ['TRTC', 'NTMC', 'TYMC'], Alert: ['TYMC', 'KRTC', 'KLRT', 'TRTC', 'TRTCMG', 'TMRT', 'NTMC', 'NTALRT', 'NTDLRT']
 };
 export const OAS_GIS_LINE_ENUM = ['TRA', 'THSR', 'TRTC', 'KRTC', 'TYMC', 'KLRT', 'NTDLRT', 'TMRT', 'NTMC', 'TRTCMG', 'NTALRT', 'AFR'];
+// v1.16 全台公車：公車 v2 OAS 的 22 個縣市（City 列舉）＋公路客運（InterCity）＋台灣好行（觀光資訊 v2：/Tourism/Bus/…/TaiwanTrip）
+export const BUS_CITIES = ['Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung', 'Keelung', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'ChanghuaCounty', 'NantouCounty', 'YunlinCounty', 'ChiayiCounty', 'Chiayi', 'PingtungCounty', 'YilanCounty', 'HualienCounty', 'TaitungCounty', 'KinmenCounty', 'PenghuCounty', 'LienchiangCounty'];
+const BUS_DAILY = new Set(['Taichung', 'Taoyuan', 'Keelung', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'ChanghuaCounty', 'NantouCounty', 'YunlinCounty', 'ChiayiCounty', 'Chiayi', 'PingtungCounty', 'YilanCounty', 'HualienCounty', 'TaitungCounty', 'Kaohsiung', 'PenghuCounty']);   // OAS 的 DailyTimeTable/City 列舉
+export const BUS_ALL = [...BUS_CITIES, 'InterCity', 'TaiwanTrip'];
+export const BUS_SOURCE_LABEL = { InterCity: '公路客運', TaiwanTrip: '台灣好行' };
+// city：'Taipei'（單一縣市，沿用舊的檔名 bus.<種類>）、'Taipei,NewTaipei,InterCity'、'all'（全台）
+export function busSources(city) {
+  if (!city) return []; const v = String(city).trim(); if (/^(all|全台|taiwan)$/i.test(v)) return BUS_ALL.slice();
+  return [...new Set(v.split(/[,\s]+/).map(x => x.trim()).filter(Boolean))];
+}
+const busPath = (src, p) => (src === 'TaiwanTrip' ? `/Tourism/Bus/${p === 'S2STravelTime' ? 'S2TravelTime' : p}/TaiwanTrip` : src === 'InterCity' ? `/Bus/${p}/InterCity` : `/Bus/${p}/City/${src}`) + '?%24format=JSON';
 export function datasetList(city = 'Taichung', operators = ['TMRT'], { rail = [], extras = false, date = null } = {}) {
-  const bus = (name, p, ttl, optional = false) => ({ name: `bus.${name}`, group: 'bus', key: name, path: `/Bus/${p}/City/${city}?%24format=JSON`, ttlMs: ttl, optional });
-  const out = city ? [bus('stopOfRoute', 'StopOfRoute', 24 * H), bus('schedule', 'Schedule', 24 * H, true), bus('daily', 'DailyTimeTable', 6 * H, true), bus('s2s', 'S2STravelTime', 7 * 24 * H, true)] : [];
+  const srcs = busSources(city), single = srcs.length === 1 && BUS_CITIES.includes(srcs[0]);
+  const bus = (src, name, p, ttl, optional = false) => ({ name: single ? `bus.${name}` : `bus.${src}.${name}`, group: 'bus', src, key: name, path: busPath(src, p), ttlMs: ttl, optional });
+  const out = [];
+  // 依 OAS 與實測：DailyTimeTable 只有部分縣市（台北、新北、台南、金門、連江回 400）；市區與公路客運的 S2STravelTime 回 404（只問台灣好行的 S2TravelTime）
+  for (const src of srcs) out.push(bus(src, 'stopOfRoute', 'StopOfRoute', 24 * H), bus(src, 'schedule', 'Schedule', 24 * H, true),
+    ...(BUS_DAILY.has(src) || src === 'InterCity' || src === 'TaiwanTrip' ? [bus(src, 'daily', 'DailyTimeTable', 6 * H, true)] : []), ...(src === 'TaiwanTrip' || single ? [bus(src, 's2s', 'S2STravelTime', 7 * 24 * H, true)] : []));
   for (const op of operators) for (const [key, p, optional, ttl = 24 * H] of [['station', 'Station', false], ['line', 'Line', true], ['stationOfLine', 'StationOfLine', true], ['stationOfRoute', 'StationOfRoute', true], ['s2s', 'S2STravelTime', true],
     ['frequency', 'Frequency', true], ['firstLast', 'FirstLastTimetable', true], ['lineTransfer', 'LineTransfer', true], ['stationExit', 'StationExit', true], ['odFare', 'ODFare', true, 7 * 24 * H],
     ...(extras ? [['stationTimeTable', 'StationTimeTable', true, 7 * 24 * H], ['stationTransfer', 'StationTransfer', true, 7 * 24 * H]] : [])]) {
@@ -87,6 +102,23 @@ export function createTdxFetcher({ upstream = 'https://tdx.transportdata.tw/api/
   };
 }
 
+// 多個來源（縣市、公路客運、台灣好行）的公車合併成一份：站牌 UID 全國唯一（各縣市前綴不同）；路線型態代碼重複時加上來源；標示來源與類別
+export function mergeBus(parts) {
+  if (!parts.length) return null; if (parts.length === 1 && !BUS_SOURCE_LABEL[parts[0].src]) return parts[0];
+  const stops = new Map(), patterns = [], ids = new Set(), warnings = [], stats = { bySource: {} };
+  // 台灣好行的路線就是各縣市公車的路線（RouteUID 相同，例如 KEE0472）：已經有同一個型態時不重複加，只標示「台灣好行」與名稱（縣市資料沒有班次時才用台灣好行的）
+  parts = [...parts].sort((x, y) => (x.src === 'TaiwanTrip') - (y.src === 'TaiwanTrip'));
+  const byId = new Map();
+  for (const b of parts) {
+    if (b.src === 'TaiwanTrip') { b.patterns = b.patterns.filter(p => { const o = byId.get(p.id); if (!o) return true; o.busKind = '台灣好行'; o.tourName = p.name; if (!o.trips.length && p.trips.length) { o.trips = p.trips; o.freqs = p.freqs; } stats.taiwanTripMerged = (stats.taiwanTripMerged || 0) + 1; return false; }); }
+    for (const st of b.stops) { const o = stops.get(st.uid); if (!o) stops.set(st.uid, st); else if (o.lat == null && st.lat != null) Object.assign(o, { lat: st.lat, lon: st.lon }); }
+    for (const p of b.patterns) { if (ids.has(p.id)) p.id = p.id + '@' + b.src; ids.add(p.id); byId.set(p.id, p); p.source = p.source + (BUS_SOURCE_LABEL[b.src] ? '（' + BUS_SOURCE_LABEL[b.src] + '）' : ''); p.busSource = b.src; if (BUS_SOURCE_LABEL[b.src]) p.busKind = BUS_SOURCE_LABEL[b.src]; patterns.push(p); }
+    warnings.push(...b.warnings.map(w => `[${BUS_SOURCE_LABEL[b.src] || b.src}] ${w}`)); stats.bySource[b.src] = b.stats;
+  }
+  stats.stops = stops.size; stats.patterns = patterns.length; stats.trips = patterns.reduce((a, p) => a + p.trips.length, 0); stats.noService = patterns.filter(p => !p.trips.length && !p.freqs.length).length;
+  return { stops: [...stops.values()], patterns, warnings, stats };
+}
+
 export function createTransitData({ dir, city = 'Taichung', operators = ['TMRT'], rail = [], extras = false, fetchJson = null, now = () => Date.now(), log = () => {} }) {
   const rawDir = path.join(dir, 'raw'), metaFile = path.join(dir, 'meta.json'), mkList = () => datasetList(city, operators, { rail, extras, date: new Date(now() + 8 * 3600e3).toISOString().slice(0, 10) });
   let list = mkList();
@@ -94,11 +126,11 @@ export function createTransitData({ dir, city = 'Taichung', operators = ['TMRT']
   const fileOf = d => path.join(rawDir, d.name + '.json.gz');
   const atomic = (f, buf) => { writeFileSync(f + '.tmp', buf); renameSync(f + '.tmp', f); };
   function rebuild() {
-    const t0 = Date.now(), busRaw = {}, metroRaw = {}, railRaw = {}, gis = {}, shared = [], rt = {}; let fetchedAt = null;
+    const t0 = Date.now(), busRaw = {}, metroRaw = {}, railRaw = {}, gis = {}, shared = [], rt = {}, busMeta = {}; let fetchedAt = null;
     for (const d of list) { const v = raw[d.name]; if (v == null) continue; fetchedAt = Math.max(fetchedAt ?? 0, meta[d.name]?.fetchedAt ?? 0);
-      if (d.group === 'bus') busRaw[d.key] = v; else if (d.group === 'rail') (railRaw[d.operator] ??= {})[d.key] = v; else if (d.group === 'gis') gis[d.operator] = v;
+      if (d.group === 'bus') { (busRaw[d.src] ??= {})[d.key] = v; if (d.key === 'stopOfRoute') busMeta[d.src] = meta[d.name]?.fetchedAt ?? null; } else if (d.group === 'rail') (railRaw[d.operator] ??= {})[d.key] = v; else if (d.group === 'gis') gis[d.operator] = v;
       else if (d.group === 'metroShared') shared.push(...v); else if (d.group === 'realtime') rt[d.name] = v; else (metroRaw[d.operator] ??= {})[d.key] = v; }
-    const bus = busRaw.stopOfRoute ? buildBus(busRaw, { fetchedAt: meta['bus.stopOfRoute']?.fetchedAt ?? null }) : null;
+    const bus = mergeBus(Object.entries(busRaw).filter(([, r]) => r.stopOfRoute).map(([src, r]) => ({ src, ...buildBus(r, { fetchedAt: busMeta[src] }) })));
     const metroOps = Object.keys(metroRaw).filter(op => metroRaw[op].station);
     const metros = metroOps.map(op => { const r = metroRaw[op], m = buildMetro(r, { operator: op, fetchedAt: meta[`metro.${op}.station`]?.fetchedAt ?? null }); for (const s of m.stops) s.mode = metroModeOf(op); for (const p of m.patterns) p.mode = metroModeOf(op);   // 輕軌（KLRT、NTDLRT、NTALRT）獨立成 lrt
       if (r.stationTimeTable) m.stats.stationTimetable = attachStationTimetables(m, r.stationTimeTable, { operator: op }); return m; });

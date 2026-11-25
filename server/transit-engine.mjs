@@ -4,13 +4,20 @@
 // 資料來源：CACHE_DIR/transit（tools/transit-sync.mjs --rail TRA,THSR --operators TRTC,NTMC,… --extras 下載；需要 TDX 金鑰）
 // 沒有資料時回 503 TRANSIT_NOT_LOADED，不會假裝有結果。
 import path from 'node:path';
+import { existsSync, statSync } from 'node:fs';
 import { createTransitData } from './transit/snapshot.mjs';
-import { buildTransfers } from './transit/transfer-engine.mjs';
+import { buildTransfersCached } from './transit/transfer-engine.mjs';
 import { planTransit, LEG_TYPE, MODE_LABEL } from './transit/raptor.mjs';
 import { ApiError } from './http-util.mjs';
 import { MinHeap } from '../js/heap.js';
 
-let td = null, ctx = null, builtKey = '', cfgT = null, injected = false;
+let td = null, ctx = null, builtKey = '', cfgT = null, injected = false, metaSig = '', metaCheckedAt = 0;
+// v1.16：同步工具（或伺服器的定時同步）更新了快取 → 下一次查詢時重新讀取（最多每分鐘檢查一次 meta.json）
+function transitChanged() {
+  if (!cfgT || Date.now() - metaCheckedAt < 60e3) return false; metaCheckedAt = Date.now();
+  const f = path.join(cfgT.cacheDir, 'transit', 'meta.json'); if (!existsSync(f)) return false;
+  const st = statSync(f), sg = st.mtimeMs + ':' + st.size; if (!metaSig) { metaSig = sg; return false; } if (sg === metaSig) return false; metaSig = sg; return true;
+}
 export function transitConfigure(cfg) { cfgT = cfg; }
 // 測試用：直接給一份資料（store＋extra），不讀快取
 export function setTransitData(store, extra = {}, router = null, log = () => {}) { injected = true; ctx = makeContext(store, extra, router, log); builtKey = 'injected'; return ctx.tr.stats; }
@@ -76,7 +83,7 @@ export function railNet(lines) {
 }
 
 export function makeContext(store, extra = {}, router = null, log = () => {}, opts = {}) {
-  const tr = buildTransfers(store, router, { log, ...opts });
+  const tr = buildTransfersCached(store, router, { log, ...opts });
   const shapesBy = new Map(); for (const s0 of extra.shapes || []) { const s = { ...s0, lines: joinLines(s0.lines) }; const k = s.op === 'TRTC' || s.op === 'NTMC' ? 'TRTC' : s.op; if (!shapesBy.has(k)) shapesBy.set(k, []); shapesBy.get(k).push(s); }
   // 捷運票價（Metro ODFare：TicketType 1 單程、FareClass 1 成人）
   const mf = new Map(); for (const [op, list] of Object.entries(extra.metroFares || {})) for (const r of list || []) { const f = (r.Fares || []).find(x => Number(x.TicketType) === 1 && Number(x.FareClass) === 1); if (f && Number.isFinite(+f.Price)) mf.set(`${op}|${r.OriginStationID}>${r.DestinationStationID}`, +f.Price); }
@@ -114,14 +121,14 @@ function ensure(router) {
   if (injected && ctx) { if (router && !ctx.router) ctx = makeContext(ctx.store, ctx.extra, router); return ctx; }
   if (!cfgT) throw new ApiError(503, 'TRANSIT_NOT_LOADED', '大眾運輸規劃尚未設定');
   if (!td) td = createTransitData({ dir: path.join(cfgT.cacheDir, 'transit'), city: cfgT.transit.city, operators: cfgT.transit.metro, rail: cfgT.transit.rail, extras: true });
-  const store = td.store || td.load();
+  const store = td.store && !transitChanged() ? td.store : td.load();
   if (!store) throw new ApiError(503, 'TRANSIT_NOT_LOADED', '伺服器沒有大眾運輸資料：先執行 node tools/transit-sync.mjs --rail TRA,THSR --operators TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT --extras（需要 TDX 金鑰）');
   const key = store.version + '|' + (router ? 'osm' : 'none');
-  if (!ctx || builtKey !== key) { ctx = makeContext(store, td.extra, router); builtKey = key; }
+  if (!ctx || builtKey !== key) { ctx = makeContext(store, td.extra, router, () => {}, { cacheFile: router ? path.join(cfgT.cacheDir, 'transit', 'transfers.json.gz') : null }); builtKey = key; }
   return ctx;
 }
 // 伺服器啟動時預先建好（全台實測：轉乘約 15 秒，避免第一位使用者等）；沒有資料回傳 false
-export function transitPrepare(router) { try { ensure(router); return true; } catch { return false; } }
+export function transitPrepare(router) { try { const c = ensure(router); try { c.store.day(new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10)); } catch { /* 沒有 day()（測試替身） */ } return true; } catch { return false; } }   // 也先展開今天的班表（全台公車第一次查詢約 5 秒）
 export function transitStatus() {
   const c = ctx; return { loaded: !!c, injected, version: c ? c.store.version : null, stats: c ? c.store.stats : null, transfers: c ? c.tr.stats : null, detail: c ? c.store.detail || null : null,
     datasets: td ? td.status().datasets : null, warnings: c ? c.store.warnings.slice(0, 50) : [] };

@@ -1,11 +1,10 @@
 // mapmatch.js — Map Matching
 // ① RouteTrack：把 GPS 吸附到「已規劃的路線」上，算出沿路線的進度（導航用，最穩）
-// ② matchToRoad：把 GPS 吸附到整張道路圖的邊（偏航後重新規劃、顯示目前道路用），考慮方向與連通性
+// （v1.18：舊路網的整張圖邊匹配 matchToRoad 已移除；偏航後由伺服器從目前位置重新規劃）
 // 高程：資料中沒有高程／立體交叉資訊，無法排除高架與平面道路的錯誤連接（見 README 限制）
 import { State } from './state.js';
 import { isGeo, lonLatToWorld, worldDistM } from './geo.js';
 import { angDiff, bearingOf } from './gps-filter.js';
-import { edgeRoad, findNearestNode, snapEdge } from './graph-core.js';
 
 export class RouteTrack {
   constructor(route) {
@@ -42,22 +41,4 @@ export class RouteTrack {
   }
   _segAt(s) { let lo = 0, hi = this.n - 1; while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (this.cum[mid] <= s) lo = mid; else hi = mid; } return lo; }
   at(s) { const i = Math.min(this.n - 2, this._segAt(Math.max(0, Math.min(this.total, s)))), L = this.cum[i+1] - this.cum[i], t = L > 0 ? (s - this.cum[i]) / L : 0; return [this.px[i] + (this.px[i+1] - this.px[i]) * t, this.py[i] + (this.py[i+1] - this.py[i]) * t]; }
-}
-
-// 整張圖的邊匹配：候選 = 最近節點與其相鄰節點發出的邊；分數 = 距離 + 方向懲罰 − 連通性加成
-export function matchToRoad(lon, lat, o = {}) {
-  const { heading = null, speed = 0, accuracy = 20, prevEdge = -1 } = o;
-  const [x, y] = lonLatToWorld(lon, lat), k = findNearestNode(x, y); if (k < 0) return null;
-  const cand = new Set([k]); for (let e = State.adjOffset[k]; e < State.adjOffset[k+1]; e++) cand.add(State.adjTo[e]);
-  let best = null;
-  for (const u of cand) {
-    const s = snapEdge(x, y, u); if (s.edge < 0) continue;
-    const bx = State.nodeXY[s.v*5+2] - State.nodeXY[u*5+2], by = State.nodeXY[s.v*5+3] - State.nodeXY[u*5+3], kx = isGeo() ? Math.cos(y * Math.PI / 180) : 1;
-    let score = s.dm;
-    if (heading != null && speed >= 2) score += Math.max(0, angDiff(heading, bearingOf(bx * kx, by)) - 60) * 0.4;     // 逆向（單行道相反方向）的邊扣分
-    if (prevEdge >= 0 && (s.edge === prevEdge || u === State.adjTo[prevEdge])) score -= 6;                            // 與上一條邊連通 → 加成，避免在平行道路間跳動
-    if (!best || score < best.score) best = { score, edge: s.edge, u, v: s.v, dm: s.dm, px: s.px, py: s.py };
-  }
-  if (!best) return null;
-  return { ...best, roadName: edgeRoad(best.edge), ok: best.dm <= Math.max(30, 2 * accuracy), node: k };
 }

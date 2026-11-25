@@ -102,9 +102,11 @@ function readdirSafe(d) { try { return readdirSync(path.join(ROOT, d)); } catch 
 // ---------- 6. TDX ----------
 step('大眾運輸與道路事件（TDX，選用）');
 if (!envHasTdx()) { info('.env 沒有 TDX 金鑰，略過（填好後執行：npm run setup -- --transit）'); if (has('--transit')) warn('指定了 --transit 但沒有金鑰'); skipped.push('TDX 同步'); }
-else if (await ask({ key: 'transit', text: '同步全台大眾運輸（台鐵、高鐵、捷運、輕軌、台北公車）與道路事件？約 2～5 分鐘' }, false)) {
-  run(process.execPath, ['tools/transit-sync.mjs', '--city', 'Taipei', '--operators', 'TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT', '--rail', 'TRA,THSR', '--extras'], { retry: 'npm run transit:sync -- --city Taipei --operators TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT --rail TRA,THSR --extras' });
-  run(process.execPath, ['tools/traffic-sync.mjs'], { retry: 'npm run traffic:sync' }); done.push('TDX 同步');
+else if (await ask({ key: 'transit', text: '同步全台大眾運輸（台鐵、高鐵、捷運、輕軌、全台公車、公路客運、台灣好行）、道路事件、即時路況、停車場與充電站？約 5～7 分鐘' }, false)) {
+  run(process.execPath, ['tools/transit-sync.mjs', '--city', 'all', '--operators', 'TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT', '--rail', 'TRA,THSR', '--extras'], { retry: 'npm run transit:sync -- --city all --operators TRTC,NTMC,TYMC,KRTC,TMRT,KLRT,NTDLRT,NTALRT --rail TRA,THSR --extras' });
+  run(process.execPath, ['tools/traffic-sync.mjs'], { retry: 'npm run traffic:sync' });
+  run(process.execPath, ['tools/traffic-flow-sync.mjs'], { retry: 'npm run traffic:flow' });
+  run(process.execPath, ['tools/places-sync.mjs'], { retry: 'npm run places:sync' }); done.push('TDX 同步（大眾運輸、道路事件、即時路況、停車場與充電站）');
 } else { info('略過'); skipped.push('TDX 同步'); }
 
 // ---------- 7. 測試 ----------

@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { scan } from './pbf.mjs';
 import { Grow, bsearch } from './grow.mjs';
+import { placesToRecords } from '../places/tdx-places.mjs';
 import { categoryOf, CATEGORIES, CAT_WORDS, SYNONYMS } from './poi-categories.mjs';
 import { compileCondition } from './conditional.mjs';
 
@@ -60,7 +61,37 @@ export function writePois(file, x, meta = {}) {
 }
 
 // ---------- 載入與索引 ----------
-export function loadPois(file) { return buildIndex(JSON.parse(gunzipSync(readFileSync(file)).toString('utf8'))); }
+export function loadPois(file, { places = null } = {}) { const D = JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')); return buildIndex(places ? mergePlaces(D, places) : D); }
+// v1.17：TDX 停車場、充電站併入（同類的 OSM 地點在 60 m 內、名稱相近或沒有名稱 → 以 TDX 為準，OSM 那筆不列）。
+// 台北市的停車場 TDX 沒有座標：名稱與台北範圍內的 OSM 停車場正規化後完全相同、而且只有一個時，才用 OSM 的位置（標示），對不到的不放
+export function mergePlaces(D, S) {
+  const T = placesToRecords(S), n0 = D.id.length, hide = new Uint8Array(n0), st = { tdxParking: 0, tdxCharging: 0, taipeiNames: (S.taipeiNames || []).length, taipeiMatched: 0, osmReplaced: 0 };
+  D.ext = D.ext || new Array(n0).fill(null);
+  // 台北：名稱對應
+  const inTpe = i => D.lat[i] > 249600000 && D.lat[i] < 252200000 && D.lon[i] > 1214500000 && D.lon[i] < 1216700000, byName = new Map();
+  for (let i = 0; i < n0; i++) if (D.cat[i] === 'parking' && D.name[i] && inTpe(i)) { const k = norm(D.name[i]); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(i); }
+  for (const x of S.taipeiNames || []) {
+    const c = x.name && byName.get(norm(x.name)); if (!c || c.length !== 1) continue; const i = c[0];
+    for (const k of Object.keys(T)) T[k].push(k === 'id' ? 'p:Taipei:' + x.id : k === 'name' ? x.name : k === 'cat' ? 'parking' : k === 'lat' ? D.lat[i] : k === 'lon' ? D.lon[i] : k === 'addr' ? D.addr[i] || '' : k === 'area' ? D.area[i] : k === 'ext' ? { src: 'TDX', kind: 'p', auth: 'Taipei', id: x.id, total: x.total, live: true, loc: 'osm-name', osmId: D.id[i] } : '');
+    hide[i] = 1; st.taipeiMatched++;
+  }
+  // 去重：TDX 地點附近的同類 OSM 地點
+  const C = 10000, g = new Map(), key = (la, lo) => Math.floor(la / C) * 1e6 + Math.floor(lo / C);   // 約 110 m 一格
+  T.id.forEach((_, j) => { const k = key(T.lat[j], T.lon[j]); if (!g.has(k)) g.set(k, []); g.get(k).push(j); });
+  const m = (la1, lo1, la2, lo2) => Math.hypot((la1 - la2) * 0.0110574, (lo1 - lo2) * 0.0111320 * 0.9);   // E7 → 公尺（台灣緯度）
+  for (let i = 0; i < n0; i++) {
+    if (hide[i] || (D.cat[i] !== 'parking' && D.cat[i] !== 'charging')) continue;
+    const cy = Math.floor(D.lat[i] / C), cx = Math.floor(D.lon[i] / C), a = norm(D.name[i]);
+    outer: for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) for (const j of g.get(y * 1e6 + x) || []) {
+      if (T.cat[j] !== D.cat[i]) continue; const d = m(D.lat[i], D.lon[i], T.lat[j], T.lon[j]), b = norm(T.name[j]);
+      if ((!a && d <= 40) || (a && d <= 60 && (a.includes(b) || b.includes(a)))) { hide[i] = 1; st.osmReplaced++; break outer; }
+    }
+  }
+  const out = {}; for (const k of Object.keys(T)) out[k] = [];
+  for (let i = 0; i < n0; i++) if (!hide[i]) for (const k of Object.keys(T)) out[k].push(k === 'ext' ? D.ext[i] : D[k][i]);
+  for (let j = 0; j < T.id.length; j++) { for (const k of Object.keys(T)) out[k].push(T[k][j]); if (T.cat[j] === 'parking') st.tdxParking++; else st.tdxCharging++; }
+  return { ...D, ...out, created: (D.created || '') + '+places:' + (S.fetchedAt || ''), placesStats: st };
+}
 export function buildIndex(D) {
   const n = D.id.length, text = new Array(n), post = new Map(), uni = new Map();
   const add = (m, k, i) => { let a = m.get(k); if (!a) m.set(k, a = []); if (a[a.length - 1] !== i) a.push(i); };
@@ -111,10 +142,16 @@ function nearbyIdx(X, la, lo, radiusKm, cat) {
 export function poiSummary(X, i, near, now) {
   const D = X.D, c = CATEGORIES[D.cat[i]] || CATEGORIES.other, la = D.lat[i] / 1e7, lo = D.lon[i] / 1e7, o = openStatus(D.hours[i], now);
   return { id: D.id[i], name: D.name[i] || c.label, nameEn: D.en[i] || null, brand: D.brand[i] || null, category: D.cat[i], categoryLabel: c.label, icon: c.icon, lat: +la.toFixed(6), lon: +lo.toFixed(6),
-    distanceM: near ? Math.round(hav(near[0], near[1], la, lo) * 1000) : null, address: D.addr[i] || null, open: o.state, openText: o.text, named: !!D.name[i] };
+    distanceM: near ? Math.round(hav(near[0], near[1], la, lo) * 1000) : null, address: D.addr[i] || null, open: o.state, openText: o.text, named: !!D.name[i],
+    ...(D.ext && D.ext[i] ? { source: 'TDX', live: D.ext[i].live ? D.id[i] : null, liveIds: D.ext[i].live ? (D.ext[i].ids || [D.id[i]]) : null, spaces: D.ext[i].total ?? null } : {}) };
 }
 export function poiDetail(X, i, now = Date.now()) {
-  const D = X.D, s = poiSummary(X, i, null, now), o = openStatus(D.hours[i], now);
+  const D = X.D, s = poiSummary(X, i, null, now), o = openStatus(D.hours[i], now), e = D.ext && D.ext[i];
+  if (e) return { ...s, hours: null, hoursEvaluable: false, phone: D.phone[i] || null, website: null, level: D.level[i] || null, area: false,
+    tdx: { kind: e.kind === 'p' ? 'parking' : 'charging', authority: e.auth, id: e.id, description: e.desc || null, fare: e.fare || null, connectors: e.connectors || null, chargingPoints: e.points ?? null, chargingRate: e.chargingRate || null, parkingRate: e.parkingRate || null,
+      serviceTime: e.serviceTime || null, restriction: e.restriction || null, motorcycle: e.moto ?? null, evCharging: e.ev ?? null, liveAvailable: !!e.live, location: e.loc === 'osm-name' ? '位置依名稱對應 OpenStreetMap 的停車場（TDX 台北市停車場沒有座標）' : null },
+    osm: e.osmId ? { type: e.osmId[0] === 'n' ? 'node' : 'way', id: e.osmId.slice(1), url: `https://www.openstreetmap.org/${e.osmId[0] === 'n' ? 'node' : 'way'}/${e.osmId.slice(1)}` } : null,
+    source: e.kind === 'p' ? '交通部 TDX 停車資訊' : '交通部 TDX 綠色運輸-充電樁' };
   return { ...s, hours: D.hours[i] || null, hoursEvaluable: !!D.hours[i] && o.state !== 'unknown', phone: D.phone[i] || null, website: D.web[i] || null, level: D.level[i] || null, area: !!D.area[i],
     osm: { type: D.id[i][0] === 'n' ? 'node' : 'way', id: D.id[i].slice(1), url: `https://www.openstreetmap.org/${D.id[i][0] === 'n' ? 'node' : 'way'}/${D.id[i].slice(1)}` }, source: '© OpenStreetMap contributors（ODbL）' };
 }

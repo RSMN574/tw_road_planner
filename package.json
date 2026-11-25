@@ -1,9 +1,9 @@
 {
   "name": "bus-planner",
-  "version": "1.14.0",
+  "version": "1.18.0",
   "private": true,
   "type": "module",
-  "description": "台灣通 MaaS：全台 OSM 道路圖（轉向限制含時段、通行權四態、道路事件）、全台多運具大眾運輸（台鐵、高鐵、捷運、輕軌、公車；RAPTOR）、可放大到 z21 的 2D／3D 地圖與 HMM 導航（零依賴；可獨立執行或掛進 server_2）",
+  "description": "台灣通 MaaS：全台 OSM 道路圖（轉向限制含時段、通行權四態、道路事件、TDX 即時路況）、全台多運具大眾運輸（台鐵、高鐵、捷運、輕軌、全台公車、公路客運、台灣好行；RAPTOR）、店家與停車／充電地點、可放大到 z21 的 2D／3D 地圖與 HMM 導航（零依賴；可獨立執行或掛進 server_2）",
   "engines": {
     "node": ">=18"
   },
@@ -13,13 +13,9 @@
     "server": "node server/server.mjs",
     "build": "node build.mjs",
     "proxy": "node proxy.mjs",
-    "test": "node build.mjs && node test/e2e.mjs && node test/ui.mjs && node test/t12_fresh.mjs && node test/net.mjs && node test/metro.mjs && node test/vehicle.mjs && node test/moa.mjs && node test/moa_random.mjs && node test/mode.mjs && node test/gps.mjs && node test/nav.mjs && node test/voice.mjs && node test/server.mjs && node test/server-workers.mjs && node test/transit-data.mjs && node test/nav-perf.mjs && node test/nav-eta.mjs && node test/metro-transit.mjs && node test/metro-json.mjs && node test/ubike-transit.mjs && node test/osm-graph.mjs && node test/server-osm.mjs && node test/osm-v111.mjs && node test/transit-rail.mjs && node test/nav-hmm.mjs && node test/map-view.mjs && node test/poi.mjs && node test/via.mjs",
-    "bench:browser": "node test/bench-browser.cjs",
-    "pack": "node tools/pack-graph.mjs",
-    "bench:transit": "node --expose-gc test/bench-transit.mjs",
+    "test": "node build.mjs && node test/gps.mjs && node test/nav.mjs && node test/voice.mjs && node test/server.mjs && node test/transit-data.mjs && node test/nav-perf.mjs && node test/nav-eta.mjs && node test/osm-graph.mjs && node test/server-osm.mjs && node test/osm-v111.mjs && node test/transit-rail.mjs && node test/nav-hmm.mjs && node test/map-view.mjs && node test/poi.mjs && node test/via.mjs && node test/traffic-flow.mjs && node test/transit-all.mjs && node test/places.mjs",
     "tdx:audit": "node tools/tdx-audit.mjs",
-    "transit:sync": "node tools/transit-sync.mjs",
-    "metro:json": "node tools/metro-json.mjs",
+    "transit:sync": "node --max-old-space-size=6144 tools/transit-sync.mjs",
     "eta:eval": "node tools/eta-eval.mjs",
     "osm:download": "node tools/osm/osm-download.mjs",
     "osm:build": "node --max-old-space-size=4096 tools/osm/osm-build.mjs",
@@ -27,13 +23,17 @@
     "osm:alt": "node --max-old-space-size=4096 tools/osm/osm-alt.mjs",
     "test:osm-real": "node test/osm-real.mjs",
     "test:server-osm": "node test/server-osm.mjs",
-    "test:browser": "node test/browser.cjs",
     "osm:audit": "node --max-old-space-size=6144 tools/osm/osm-audit.mjs",
     "osm:buildings": "node --max-old-space-size=6144 tools/osm/osm-buildings.mjs",
     "traffic:sync": "node tools/traffic-sync.mjs",
     "test:v111": "node test/osm-v111.mjs && node test/transit-rail.mjs && node test/nav-hmm.mjs && node test/map-view.mjs",
     "osm:poi": "node --max-old-space-size=6144 tools/osm/osm-poi.mjs",
     "test:poi": "node test/poi.mjs",
-    "test:via": "node test/via.mjs"
+    "test:via": "node test/via.mjs",
+    "traffic:flow": "node tools/traffic-flow-sync.mjs",
+    "test:flow": "node test/traffic-flow.mjs",
+    "test:transit-all": "node test/transit-all.mjs",
+    "test:places": "node test/places.mjs",
+    "places:sync": "node tools/places-sync.mjs"
   }
 }

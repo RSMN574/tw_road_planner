@@ -8,10 +8,11 @@ COPY css ./css
 COPY js ./js
 COPY icons ./icons
 COPY server ./server
-COPY data/metro.json /data/metro.json
+COPY tools ./tools
+RUN mkdir -p /data
 RUN node build.mjs && addgroup -S app && adduser -S app -G app && chown -R app:app /app /data
 USER app
 EXPOSE 8080
-# 路網資料用 volume 掛進 /data（/data/graph/nodes.json…）
+# 全台 OSM 道路圖用 volume 掛進 /data（/data/osm/graph/…，npm run osm:build 產生）；TDX 快取在 CACHE_DIR
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s CMD wget -qO- http://127.0.0.1:8080/api/v1/health >/dev/null || exit 1
 CMD ["node", "server/server.mjs"]

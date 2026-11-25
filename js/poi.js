@@ -72,10 +72,40 @@ function poRenderList() {
   if (!L.length) { box.innerHTML = head + `<div class="ds-state ds-empty">${icon('search', 28)}<p>${poS.openNow ? '附近沒有確定營業中的地點（多數店家沒有提供營業時間）' : '找不到符合的地點'}。可以改用類別（例如「加油站」）或路名搜尋。</p></div>`; return; }
   const note = poS.data && poS.data.note ? `<p class="ds-muted po-note">${esc(poS.data.note)}</p>` : '';
   box.innerHTML = head + note + `<ol class="po-list" role="listbox" aria-label="搜尋結果">` + L.map((r, i) => `<li role="option" aria-selected="${i === poS.sel}" class="po-row${i === poS.sel ? ' sel' : ''}" data-i="${i}">
-    <span class="po-num">${i + 1}</span><span class="po-t"><b>${esc(poName(r))}</b><small>${esc(r.categoryLabel)}${poDist(r) ? '・' + poDist(r) : ''} ${poBadge(r)}</small>${poPlace(r) ? `<small class="po-addr">${esc(poPlace(r))}</small>` : ''}${r.moreSameName ? `<small class="po-more">附近還有 ${r.moreSameName} 家同名</small>` : ''}</span>
+    <span class="po-num">${i + 1}</span><span class="po-t"><b>${esc(poName(r))}</b><small>${esc(r.categoryLabel)}${poDist(r) ? '・' + poDist(r) : ''} ${poBadge(r)}</small>${poPlace(r) ? `<small class="po-addr">${esc(poPlace(r))}</small>` : ''}${r.moreSameName ? `<small class="po-more">附近還有 ${r.moreSameName} 家同名</small>` : ''}${r.liveIds ? `<small class="po-live" data-ids="${esc(r.liveIds.join(','))}" data-kind="${r.category}">${poLiveText(r.liveIds, r.category)}</small>` : ''}</span>
     <button type="button" class="po-go" data-go="${i}" aria-label="設為目的地：${esc(poName(r))}">${icon('route', 20)}<span>路線</span></button></li>`).join('') + '</ol>' +
-    `<p class="ds-muted po-src">資料：© OpenStreetMap contributors（ODbL）・沒有評分與評論</p>`;
+    `<p class="ds-muted po-src">資料：© OpenStreetMap contributors（ODbL）${L.some(r => r.source === 'TDX') ? '・停車場與充電站：交通部 TDX' : ''}・沒有評分與評論</p>`;
+  poRefreshLive();
 }
+
+// ---------- 即時剩餘車位、充電槍狀態（v1.17；/api/v1/poi/live，伺服器快取 3 分鐘）----------
+const poLive = { data: {}, at: 0, busy: false, t: null };
+function poLiveText(ids, cat) {
+  const xs = ids.map(id => poLive.data[id]).filter(Boolean); if (!xs.length) return '<span class="po-lv wait">即時資料載入中…</span>';
+  if (xs.every(x => x.unsupported)) return `<span class="po-lv na">${esc(xs[0].note || '沒有即時資料')}</span>`;
+  const ok = xs.filter(x => !x.unsupported && !x.error && !x.missing); if (!ok.length) return '<span class="po-lv na">即時資料暫時取不到</span>';
+  const sum = k => ok.reduce((a, x) => a + (x[k] || 0), 0), age = Math.max(...ok.map(x => x.at || 0)), mins = age ? Math.max(0, Math.round((Date.now() - age) / 60e3)) : null;
+  // 資料時間：超過 30 分鐘的照實標示（實測台中有停車場的「即時」資料停在 18 天前）
+  const stale = mins != null && mins > 30, when = mins == null ? '' : mins <= 1 ? '・剛更新' : mins < 60 ? `・${mins} 分前` : mins < 1440 ? `・${Math.round(mins / 60)} 小時前的資料` : `・${Math.round(mins / 1440)} 天前的資料`;
+  if (stale) return `<span class="po-lv na">最後一筆即時資料${when.slice(1)}，可能已不準</span>`;
+  if (cat === 'charging') { const a = sum('available'), t = sum('total'), f = sum('fault'); return `<span class="po-lv ${a ? 'good' : 'bad'}">空槍 ${a}／${t}</span>${f ? ` <span class="po-lv na">故障 ${f}</span>` : ''}<span class="po-lv-t">${when}</span>`; }
+  const known = ok.filter(x => x.available != null && x.total !== 0), motoOnly = !known.length && ok.some(x => x.motoAvailable != null);   // 機車停車場：汽車位 0／0，只顯示機車
+  if (motoOnly) { const mm = ok.reduce((s0, x) => s0 + (x.motoAvailable || 0), 0), mt = ok.reduce((s0, x) => s0 + (x.motoTotal || 0), 0); return `<span class="po-lv ${mm ? 'good' : 'bad'}">機車剩 ${mm} 位${mt ? '／' + mt : ''}</span><span class="po-lv-t">${when}</span>`; }
+  if (!known.length) return '<span class="po-lv na">沒有剩餘車位數字</span>';
+  const a = known.reduce((s0, x) => s0 + x.available, 0), t = known.reduce((s0, x) => s0 + (x.total || 0), 0), m = ok.filter(x => x.motoAvailable != null).reduce((s0, x) => s0 + x.motoAvailable, 0), cls = a === 0 ? 'bad' : a < 20 || (t && a / t < 0.1) ? 'warn' : 'good';
+  return `<span class="po-lv ${cls}">剩 ${a} 位${t ? '／' + t : ''}</span>${ok.some(x => x.motoAvailable != null) ? ` <span class="po-lv">機車 ${m}</span>` : ''}${ok[0].service && ok[0].service !== '營業中' ? ` <span class="po-lv na">${esc(ok[0].service)}</span>` : ''}<span class="po-lv-t">${when}</span>`;
+}
+async function poRefreshLive() {
+  const els = [...document.querySelectorAll('.po-live[data-ids]')]; if (!els.length || poLive.busy) return;
+  const ids = [...new Set(els.flatMap(e => e.dataset.ids.split(',')))], need = ids.filter(id => !poLive.data[id] || Date.now() - poLive.at > 120e3); if (!need.length) { poPaintLive(); return; }
+  poLive.busy = true;
+  try { const r = await fetch('api/v1/poi/live?ids=' + encodeURIComponent(need.slice(0, 60).join(','))), j = await r.json(); if (j && j.ok) { if (!j.data.available) for (const id of need) poLive.data[id] = { unsupported: true, note: j.data.note }; else Object.assign(poLive.data, j.data.items); poLive.at = Date.now(); } }
+  catch { /* 離線：維持「載入中」 */ } finally { poLive.busy = false; }
+  poPaintLive();
+  clearTimeout(poLive.t); poLive.t = setTimeout(() => { if (document.body.classList.contains('poi-mode') || !(poId('poiCard') || {}).hidden) poRefreshLive(); }, 125e3);
+}
+function poPaintLive() { for (const e of document.querySelectorAll('.po-live[data-ids]')) e.innerHTML = poLiveText(e.dataset.ids.split(','), e.dataset.kind); }
+
 async function poRerun() {
   const my = ++poS.seq; let d;
   try { d = await poiSearch(poS.category && poS.data && poS.data.mode === 'category' ? '' : poS.q, { category: poS.data && poS.data.mode === 'category' ? poS.category : null, openNow: poS.openNow, limit: 30 }); }
@@ -153,13 +183,25 @@ function poCardHtml(card, r, d) {
   if (d && d.hours && !d.hoursEvaluable) rows.push(`<p class="ds-muted">營業時間（原文，無法自動判斷）：${esc(d.hours)}</p>`); else if (d && d.hours) rows.push(`<p class="ds-muted">營業時間：${esc(d.hours)}</p>`);
   if (poPlace(r)) rows.push(`<p>${icon('pin', 16)} ${esc(poPlace(r))}${d && d.level ? `（${esc(d.level)} 樓）` : ''}</p>`);
   if (d && d.phone) { const tel = String(d.phone).split(/[;,]/)[0].trim(); rows.push(`<p>${icon('phone', 16)} <a href="tel:${esc(tel.replace(/[^\d+]/g, ''))}">${esc(tel)}</a></p>`); }
+  if (r.liveIds) rows.push(`<p class="po-live" data-ids="${esc(r.liveIds.join(','))}" data-kind="${r.category}">${poLiveText(r.liveIds, r.category)}</p>`);
+  const t = d && d.tdx;
+  if (t) {
+    if (t.connectors && t.connectors.length) rows.push(`<p>充電槍：${esc(t.connectors.join('、'))}${t.chargingPoints ? `（${t.chargingPoints} 座充電樁）` : ''}</p>`);
+    if (t.chargingRate) rows.push(`<p class="ds-muted">充電費率：${esc(t.chargingRate)}</p>`);
+    if (t.parkingRate || t.fare) rows.push(`<p class="ds-muted">停車費率：${esc(t.parkingRate || t.fare)}</p>`);
+    if (t.serviceTime) rows.push(`<p class="ds-muted">開放時間：${esc(t.serviceTime)}</p>`);
+    if (t.description && t.description !== t.parkingRate && t.description !== t.fare) rows.push(`<p class="ds-muted">${esc(t.description)}</p>`);
+    if (t.restriction) rows.push(`<p class="ds-muted">限制：${esc(t.restriction)}</p>`);
+    if (t.location) rows.push(`<p class="ds-muted">${esc(t.location)}</p>`);
+    if (!t.liveAvailable) rows.push(`<p class="ds-muted">${t.kind === 'parking' ? '這個縣市沒有提供即時剩餘車位' : '沒有即時充電槍狀態'}</p>`);
+  }
   const web = d && d.website && poSafeUrl(d.website); if (web) rows.push(`<p>${icon('globe', 16)} <a href="${esc(web)}" target="_blank" rel="noopener noreferrer">${esc(web.replace(/^https?:\/\//, '').replace(/\/$/, '').slice(0, 40))}</a></p>`);
   card.innerHTML = `<div class="ds-ev-h"><span class="po-c-title"><b>${esc(poName(r))}</b><small>${esc(r.categoryLabel)}${poDist(r) ? '・' + poDist(r) : ''}${r.nameEn && r.nameEn !== r.name ? '・' + esc(r.nameEn) : ''}</small></span><button type="button" class="ds-icon-btn" data-po-cclose="1" aria-label="關閉">${icon('close', 20)}</button></div>
     ${rows.join('')}<div class="po-c-more">${d ? '' : '<p class="ds-muted">載入詳細資料…</p>'}</div>
     <div class="po-c-act">${State.viaPending ? `<button type="button" class="ds-btn-1" data-po-as="via">${icon('pin', 18)} 加入途經點</button>` : `<button type="button" class="ds-btn-1" data-po-as="to">${icon('flag', 18)} 設為目的地</button>`}<button type="button" class="ds-btn-2" data-po-as="from">${icon('locate', 18)} 設為起點</button></div>
     ${State.toPoint && !State.viaPending ? `<button type="button" class="ds-btn-2 po-via" data-po-as="via">${icon('pin', 18)} 加入途經點（${(State.via || []).length}/5）</button>` : ''}
-    <p class="ds-muted po-src">資料：© OpenStreetMap contributors（ODbL）${d && d.osm ? `・<a href="${esc(d.osm.url)}" target="_blank" rel="noopener noreferrer">在 OSM 查看／修正</a>` : ''}</p>`;
-  card.dataset.id = r.id; card._po = r;
+    <p class="ds-muted po-src">資料：${d && d.tdx ? esc(d.source) + (d.osm ? '（位置：© OpenStreetMap contributors）' : '') : '© OpenStreetMap contributors（ODbL）'}${d && d.osm ? `・<a href="${esc(d.osm.url)}" target="_blank" rel="noopener noreferrer">在 OSM 查看／修正</a>` : ''}</p>`;
+  card.dataset.id = r.id; card._po = r; if (r.liveIds) poRefreshLive();
 }
 function poSetAs(r, which) {
   if (!r) return; const p = osmPoint(r.lon, r.lat, poName(r)); p.poi = r.id; if (r.address) p.road = r.address;
